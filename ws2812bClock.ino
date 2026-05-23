@@ -308,6 +308,9 @@ void setup() {
 #define PAGINA_SVEGLIA2 5
 #define PAGINA_CONFIG 6
 #define PAGINA_FINE 7
+// Ultima pagina navigabile: sveglia/config non sono implementate, quindi la
+// navigazione manuale (SU/GIU) cicla solo Orario..Meteo. Alzare quando le si aggiunge.
+#define PAGINA_ULTIMA PAGINA_METEO
 
 unsigned long t1, t_pagina, t_SX_btn, t_SU_btn, t_GIU_btn, t_DX_btn;
 bool blink = true, AUTO_NEXT_PAGE = true, inizioPagina = true,
@@ -353,7 +356,7 @@ void BTN_ACTION(byte id, bool lp = false) {
       } else {
         //pressione corta
         nuova_pagina--;
-        if (nuova_pagina <= PAGINA_ZERO) nuova_pagina = PAGINA_FINE - 1;
+        if (nuova_pagina < PAGINA_ORARIO) nuova_pagina = PAGINA_ULTIMA;
         AUTO_NEXT_PAGE = false;
       }
       break;
@@ -363,7 +366,7 @@ void BTN_ACTION(byte id, bool lp = false) {
       } else {
         //pressione corta
         nuova_pagina++;
-        if (nuova_pagina >= PAGINA_FINE) nuova_pagina = PAGINA_ZERO + 1;
+        if (nuova_pagina > PAGINA_ULTIMA) nuova_pagina = PAGINA_ORARIO;
         AUTO_NEXT_PAGE = false;
       }
       break;
@@ -557,10 +560,11 @@ void loop() {
         scrivi(buf, FONT_5x3, 2, cx, colore);
         strip.Show();
         cx--;
-        if (AUTO_NEXT_PAGE) {
-          if (cx < 0 - larghezza(buf, FONT_5x3)) nuova_pagina = PAGINA_METEO;
-        }else{
-          inizioPagina=true;
+        // quando la data e' uscita tutta a sinistra: in automatico avanza al
+        // meteo, in manuale riparte da capo (scroll in loop sulla pagina).
+        if (cx < 0 - larghezza(buf, FONT_5x3)) {
+          if (AUTO_NEXT_PAGE) nuova_pagina = PAGINA_METEO;
+          else inizioPagina = true;
         }
       }
     }
