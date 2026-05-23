@@ -13,6 +13,7 @@
 #include <ESP8266HTTPUpdateServer.h>
 #include <SparkFun_APDS9960.h>
 #include <Adafruit_PCF8574.h>
+#include <EEPROM.h>
 
 Adafruit_PCF8574 pcf;
 
@@ -70,6 +71,49 @@ uint16_t ambient_light = 0;
 uint16_t amb_max = 800;      // soglia ambient per luminosita' max (tarabile via /lum?max=NN)
 bool apds_init_ok = false;   // esito init APDS al boot
 bool apds_light_ok = false;  // esito enableLightSensor al boot
+
+// --- Sveglia ---
+// Una sveglia: orario + giorni della settimana attivi (bit0=Lun .. bit6=Dom).
+// Suona quando il giorno corrente e' attivo all'ora impostata. Persistita in
+// EEPROM (flash emulata) per sopravvivere a reboot/OTA.
+#define SV_MAGIC 0x5A          // marcatore di validita' della config in EEPROM
+#define SV_EEPROM_ADDR 0
+uint8_t sv_ore = 7;
+uint8_t sv_min = 0;
+uint8_t sv_giorni = 0;         // nessun giorno attivo = sveglia spenta
+bool allarme_attivo = false;   // true mentre la sveglia sta "suonando"
+int sv_minuto_scattato = -1;   // minuto del giorno in cui e' gia' scattata (anti-ripetizione)
+const char* GG_SIGLA[7] = { "LU", "MA", "ME", "GI", "VE", "SA", "DO" };
+// Hook buzzer (futuro): definire BUZZER_PIN e completare buzzer().
+// #define BUZZER_PIN D3
+void buzzer(bool on) {
+#ifdef BUZZER_PIN
+  digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
+#else
+  (void)on;
+#endif
+}
+
+// Indice giorno 0=Lun..6=Dom a partire da weekday() di TimeLib (1=Dom..7=Sab).
+int giornoIndex(int wd) { return (wd == 1) ? 6 : (wd - 2); }
+
+void caricaSveglia() {
+  struct { uint8_t magic, ore, min, giorni; } c;
+  EEPROM.get(SV_EEPROM_ADDR, c);
+  if (c.magic == SV_MAGIC && c.ore < 24 && c.min < 60) {
+    sv_ore = c.ore; sv_min = c.min; sv_giorni = c.giorni;
+    Serial.printf("Sveglia caricata: %02d:%02d giorni=0x%02X\n", sv_ore, sv_min, sv_giorni);
+  } else {
+    Serial.println("Sveglia: nessuna config valida in EEPROM, uso default");
+  }
+}
+
+void salvaSveglia() {
+  struct { uint8_t magic, ore, min, giorni; } c = { SV_MAGIC, sv_ore, sv_min, sv_giorni };
+  EEPROM.put(SV_EEPROM_ADDR, c);
+  EEPROM.commit();
+  Serial.printf("Sveglia salvata: %02d:%02d giorni=0x%02X\n", sv_ore, sv_min, sv_giorni);
+}
 
 // --- Meteo (OpenWeather) ---
 const char* meteo_apikey = "API_KEY_PLACEHOLDER";
@@ -184,6 +228,8 @@ void scaricaMeteo() {
 
 void setup() {
   Serial.begin(115200);
+  EEPROM.begin(64);
+  caricaSveglia();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   // L'APDS-9960 fa clock stretching aggressivo: clock basso + limite alto
@@ -263,6 +309,35 @@ void setup() {
     snprintf(buf, sizeof(buf), "luminosita: %d/255\nambient: %d\namb_max: %d\n",
              luminosita, ambient_light, amb_max);
     httpServer.send(200, "text/plain", buf);
+  });
+  // Pagina web per impostare la sveglia (alternativa ai pulsanti).
+  httpServer.on("/sveglia", []() {
+    if (httpServer.hasArg("save")) {
+      sv_ore = constrain(httpServer.arg("ore").toInt(), 0, 23);
+      sv_min = constrain(httpServer.arg("min").toInt(), 0, 59);
+      sv_giorni = 0;
+      for (int i = 0; i < 7; i++)
+        if (httpServer.hasArg(String("g") + i)) sv_giorni |= (1 << i);
+      salvaSveglia();
+    }
+    String h = "<!doctype html><html><head><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width,initial-scale=1'>"
+               "<title>Sveglia</title><style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
+               "label{display:inline-block;margin:6px 10px 6px 0}input[type=number]{width:3em}"
+               "button{margin-top:14px;padding:8px 16px;font-size:1em}</style></head><body>";
+    h += "<h2>Sveglia</h2><form method=get action=/sveglia>";
+    h += "Ora: <input type=number name=ore min=0 max=23 value=" + String(sv_ore) + ">";
+    h += " : <input type=number name=min min=0 max=59 value=" + String(sv_min) + "><br>";
+    const char* gg[7] = { "Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom" };
+    for (int i = 0; i < 7; i++) {
+      h += "<label><input type=checkbox name=g" + String(i);
+      if (sv_giorni & (1 << i)) h += " checked";
+      h += "> " + String(gg[i]) + "</label>";
+    }
+    h += "<input type=hidden name=save value=1><br><button type=submit>Salva</button></form>";
+    h += "<p>Stato: " + String(sv_giorni ? "attiva" : "spenta (nessun giorno)") + "</p>";
+    h += "</body></html>";
+    httpServer.send(200, "text/html", h);
   });
   httpServer.on("/status", []() {
     time_t n = now();
@@ -398,11 +473,20 @@ void loop() {
   // WiFi sempre attivo: server OTA/HTTP e mDNS gestiti ad ogni giro
   httpServer.handleClient();
   MDNS.update();
+  controllaSveglia();
   if (pcfInputs) {
     //Serial.println("Interrupt");
     pcfInputs = false;
     //leggi lo stato dei pulsanti
     SX_btn = !pcf.digitalRead(SX_btn_PCFpin), SU_btn = !pcf.digitalRead(SU_btn_PCFpin), GIU_btn = !pcf.digitalRead(GIU_btn_PCFpin), DX_btn = !pcf.digitalRead(DX_btn_PCFpin);
+
+    // Se la sveglia sta suonando, un tasto qualsiasi la silenzia (e non fa altro)
+    if (allarme_attivo && (SX_btn || SU_btn || GIU_btn || DX_btn)) {
+      allarme_attivo = false;
+      buzzer(false);
+      p_SX_btn = SX_btn; p_SU_btn = SU_btn; p_GIU_btn = GIU_btn; p_DX_btn = DX_btn;
+      return;
+    }
 
     if (SX_btn && !p_SX_btn) {
       Serial.println("SX_btn inizio pressione");
@@ -525,6 +609,11 @@ void loop() {
   }
   if (stato != nuovo_stato) {
     stato = nuovo_stato;
+  }
+  // Mentre la sveglia suona, la visualizzazione e' presa dall'allarme
+  if (allarme_attivo) {
+    mostraAllarme();
+    return;
   }
   if (stato == 0) {
     if (pagina == PAGINA_ORARIO) {
@@ -758,5 +847,38 @@ void regolaLuminosita() {
     Serial.print(" (ambient=");
     Serial.print(ambient_light);
     Serial.println(")");
+  }
+}
+
+// Verifica se la sveglia deve scattare: giorno corrente attivo + ora coincidente.
+// Scatta una sola volta per minuto (sv_minuto_scattato evita ripetizioni se silenziata).
+void controllaSveglia() {
+  if (sv_giorni == 0 || allarme_attivo) return;
+  time_t n = now();
+  int idx = giornoIndex(weekday(n));
+  int minutoGiorno = hour(n) * 60 + minute(n);
+  if ((sv_giorni & (1 << idx)) && hour(n) == sv_ore && minute(n) == sv_min
+      && sv_minuto_scattato != minutoGiorno) {
+    allarme_attivo = true;
+    sv_minuto_scattato = minutoGiorno;
+    Serial.println("SVEGLIA!");
+  }
+}
+
+// Suoneria visiva: "SVEGLIA" scorrevole e lampeggiante (rosso) finche' non si
+// preme un tasto. buzzer() e' un hook per un futuro cicalino.
+void mostraAllarme() {
+  static unsigned long t_scroll = 0, t_blink = 0;
+  static int acx = 31;
+  static bool vis = true;
+  if (millis() - t_blink > 350) { vis = !vis; t_blink = millis(); buzzer(vis); }
+  if (millis() - t_scroll > 60) {
+    t_scroll = millis();
+    strip.ClearTo(RgbColor(0));
+    // font 5x3: il font 8x6 contiene solo cifre/simboli, non le lettere
+    if (vis) scrivi("SVEGLIA", FONT_5x3, 2, acx, 0xff0000);
+    strip.Show();
+    acx--;
+    if (acx < 0 - larghezza("SVEGLIA", FONT_5x3)) acx = 31;
   }
 }
