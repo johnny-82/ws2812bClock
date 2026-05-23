@@ -884,6 +884,23 @@ void mostraConfig() {
   if (ccx < 0 - larghezza(msg, FONT_5x3)) ccx = 31;
 }
 
+// Icona interruttore a levetta 3x5 (cornice grigia). Leva in alto/verde = ON,
+// in basso/rosso = OFF. sc = colonna iniziale; nascondi = non disegnare (lampeggio).
+void disegnaInterruttore(int sc, bool on, bool nascondi) {
+  for (int r = 0; r < 5; r++) {
+    for (int c = 0; c < 3; c++) {
+      RgbColor px(0, 0, 0);
+      bool bordo = (r == 0 || r == 4) || (c == 0 || c == 2);  // cornice
+      if (bordo) px = RgbColor(150, 150, 150);                // grigio
+      else if (on && (r == 1 || r == 2)) px = RgbColor(0, 255, 0);   // leva su = verde
+      else if (!on && (r == 2 || r == 3)) px = RgbColor(255, 0, 0);  // leva giu = rosso
+      int lp = ledPos(r, sc + c);
+      if (lp >= 0 && lp < NUM_LEDS)
+        strip.SetPixelColor(lp, nascondi ? RgbColor(0) : applicaLum(px));
+    }
+  }
+}
+
 // Pagina sveglia: HH:MM in alto + 7 segmenti da 3 LED in basso (uno per giorno,
 // Lun..Dom), verde=attivo / rosso=non attivo. In modifica (mod=true) il campo
 // sotto il cursore lampeggia; sui giorni mostra anche la sigla accanto all'ora.
@@ -894,22 +911,22 @@ void disegnaSveglia(bool mod) {
   tdraw = millis();
   if (millis() - tblink > 300) { bl = !bl; tblink = millis(); }
   strip.ClearTo(RgbColor(0));
-  // ora HH:MM (font 5x3) sempre a posizione fissa; colore = stato sveglia
-  // (verde ON / rosso OFF). In modifica il campo selezionato lampeggia
-  // coprendolo in nero (cosi' le cifre non si spostano).
+  // Disposizione riga alta: [interruttore] [HH:MM] [sigla giorno].
+  // Interruttore on/off a sinistra (lampeggia se selezionato in modifica).
+  disegnaInterruttore(0, sv_attiva, mod && pos_curs == 0 && !bl);
+  // ora HH:MM (bianca) a posizione fissa; in modifica il campo selezionato
+  // lampeggia (coperto in nero, cosi' le cifre non si spostano).
+  const int ORA_COL = 5;
   char hh[3], mm[3];
   sprintf(hh, "%02d", sv_ore);
   sprintf(mm, "%02d", sv_min);
-  unsigned int c_ora = sv_attiva ? 0x00ff00 : 0xff0000;  // verde=ON, rosso=OFF
-  scrivi(String(hh) + ":" + mm, FONT_5x3, 0, 1, c_ora);
+  scrivi(String(hh) + ":" + mm, FONT_5x3, 0, ORA_COL, 0xffffff);
   if (mod && !bl) {
-    // pos 0 = on/off: lampeggia tutta l'ora; pos 1 = ore; pos 2 = minuti
-    if (pos_curs == 0) scrivi(String(hh) + ":" + mm, FONT_5x3, 0, 1, 0x000000);
-    else if (pos_curs == 1) scrivi(hh, FONT_5x3, 0, 1, 0x000000);
-    else if (pos_curs == 2) scrivi(mm, FONT_5x3, 0, 1 + larghezza(String(hh) + ":", FONT_5x3), 0x000000);
+    if (pos_curs == 1) scrivi(hh, FONT_5x3, 0, ORA_COL, 0x000000);                                          // ore
+    else if (pos_curs == 2) scrivi(mm, FONT_5x3, 0, ORA_COL + larghezza(String(hh) + ":", FONT_5x3), 0x000000);  // minuti
   }
-  // in modifica su un giorno: sigla accanto all'ora (es. "LU")
-  if (mod && pos_curs >= 3) scrivi(GG_SIGLA[pos_curs - 3], FONT_5x3, 0, 22, c_ora);
+  // sigla del giorno selezionato, a destra (solo in modifica su un giorno)
+  if (mod && pos_curs >= 3) scrivi(GG_SIGLA[pos_curs - 3], FONT_5x3, 0, 25, 0xffffff);
   // 7 segmenti giorni sulla riga in basso
   for (int g = 0; g < 7; g++) {
     bool attivo = sv_giorni & (1 << g);
