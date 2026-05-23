@@ -85,8 +85,9 @@ bool sv_attiva = true;         // interruttore on/off (conserva i giorni da spen
 bool allarme_attivo = false;   // true mentre la sveglia sta "suonando"
 int sv_minuto_scattato = -1;   // minuto del giorno in cui e' gia' scattata (anti-ripetizione)
 const char* GG_SIGLA[7] = { "LU", "MA", "ME", "GI", "VE", "SA", "DO" };
-// Hook buzzer (futuro): definire BUZZER_PIN e completare buzzer().
-// #define BUZZER_PIN D3
+// Buzzer attivo su D3 (GPIO0). NB: GPIO0 e' pin di strapping (deve stare alto al
+// boot); il buzzer va pilotato in modo da non tenere basso il pin all'accensione.
+#define BUZZER_PIN D3
 void buzzer(bool on) {
 #ifdef BUZZER_PIN
   digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
@@ -229,6 +230,10 @@ void scaricaMeteo() {
 
 void setup() {
   Serial.begin(115200);
+#ifdef BUZZER_PIN
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);  // buzzer spento subito (evita "tic" al boot)
+#endif
   EEPROM.begin(64);
   caricaSveglia();
 
