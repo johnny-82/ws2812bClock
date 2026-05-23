@@ -351,6 +351,19 @@ void setup() {
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
   });
+  // Home: link rapidi (comodo da telefono digitando solo l'IP).
+  httpServer.on("/", []() {
+    String h = "<!doctype html><html><head><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width,initial-scale=1'><title>Wificlock</title>"
+               "<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
+               "a{display:block;padding:12px;margin:8px 0;background:#eee;border-radius:8px;"
+               "text-decoration:none;color:#222;font-size:1.1em}</style></head><body>";
+    h += "<h2>Wificlock</h2>";
+    h += "<a href=/sveglia>&#9200; Sveglia</a><a href=/status>&#128202; Stato</a>"
+         "<a href=/lum>&#128161; Luminosita</a><a href=/wifi>&#128246; WiFi setup</a>";
+    h += "</body></html>";
+    httpServer.send(200, "text/html", h);
+  });
   // /lum?v=NN forza la luminosita' (override temporaneo, 0-255).
   // /lum?max=NN tara la soglia di luce per il massimo e rilegge il sensore.
   httpServer.on("/lum", []() {
@@ -993,9 +1006,10 @@ void mostraPortale() {
 void mostraConfig() {
   static unsigned long t = 0;
   static int ccx = 31;
-  const char* msg = "WIFICLOCK.LOCAL/SVEGLIA";
   if (millis() - t < 75) return;
   t = millis();
+  // mostra l'IP reale: Android non risolve gli indirizzi .local nel browser
+  String msg = "SVEGLIA: " + WiFi.localIP().toString() + " - SETUP WIFI: TIENI PREMUTO SU";
   strip.ClearTo(RgbColor(0));
   scrivi(msg, FONT_5x3, 2, ccx, colore);
   strip.Show();
