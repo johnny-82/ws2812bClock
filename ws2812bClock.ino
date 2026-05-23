@@ -385,8 +385,8 @@ void setup() {
 #define PAGINA_SVEGLIA 4
 #define PAGINA_CONFIG 5
 #define PAGINA_FINE 6
-// Ultima pagina navigabile con SU/GIU. Config (web link) arrivera' nello step 3.
-#define PAGINA_ULTIMA PAGINA_SVEGLIA
+// Ultima pagina navigabile con SU/GIU: Orario, Data, Meteo, Sveglia, Config.
+#define PAGINA_ULTIMA PAGINA_CONFIG
 #define SV_NCAMPI 10  // campi modifica: 0=on/off,1=ore,2=min,3..9=giorni Lun..Dom
 
 unsigned long t1, t_pagina, t_SX_btn, t_SU_btn, t_GIU_btn, t_DX_btn;
@@ -671,6 +671,9 @@ void loop() {
     if (pagina == PAGINA_SVEGLIA) {
       disegnaSveglia(false);  // visualizzazione (non entra nell'avanzamento auto)
     }
+    if (pagina == PAGINA_CONFIG) {
+      mostraConfig();         // mostra l'indirizzo web per configurare da browser
+    }
     //if (inizioPagina) nuova_pagina = PAGINA_ORARIO;
     if (nuova_pagina != pagina) {
       pagina = nuova_pagina;
@@ -860,6 +863,20 @@ void controllaSveglia() {
     sv_minuto_scattato = minutoGiorno;
     Serial.println("SVEGLIA!");
   }
+}
+
+// Pagina config: scorre l'indirizzo web per configurare la sveglia da browser.
+void mostraConfig() {
+  static unsigned long t = 0;
+  static int ccx = 31;
+  const char* msg = "WIFICLOCK.LOCAL/SVEGLIA";
+  if (millis() - t < 75) return;
+  t = millis();
+  strip.ClearTo(RgbColor(0));
+  scrivi(msg, FONT_5x3, 2, ccx, colore);
+  strip.Show();
+  ccx--;
+  if (ccx < 0 - larghezza(msg, FONT_5x3)) ccx = 31;
 }
 
 // Pagina sveglia: HH:MM in alto + 7 segmenti da 3 LED in basso (uno per giorno,
