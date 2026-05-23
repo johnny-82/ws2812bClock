@@ -11,6 +11,7 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include <SparkFun_APDS9960.h>
 #include <Adafruit_PCF8574.h>
 
 Adafruit_PCF8574 pcf;
@@ -59,12 +60,15 @@ int cx = 0;
 // globale affidabile (SetLuminance di Lg non scalava nel nostro flusso): la
 // luminosita' la applichiamo noi a mano ai colori, vedi applicaLum().
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart1Ws2812xMethod> strip(NUM_LEDS);
-// Luminosita' FISSA (0-255), applicata a mano ai colori in applicaLum(),
-// regolabile dal vivo via /lum. La regolazione automatica col sensore APDS-9960
-// e' stata rimossa: il modulo si resettava di continuo (brown-out quando i LED
-// assorbono corrente) rendendo le letture inaffidabili. Da riattivare (vedi git)
-// solo dopo aver sistemato l'alimentazione/decoupling del sensore.
+// Luminosita' (0-255), applicata a mano ai colori in applicaLum(). Regolata
+// automaticamente da regolaLuminosita() in base al sensore APDS-9960, con tetto 20.
+// Regolabile/forzabile dal vivo via /lum.
 uint8_t luminosita = 20;
+
+SparkFun_APDS9960 apds = SparkFun_APDS9960();
+uint16_t ambient_light = 0;
+bool apds_init_ok = false;   // esito init APDS al boot
+bool apds_light_ok = false;  // esito enableLightSensor al boot
 
 // --- Meteo (OpenWeather) ---
 const char* meteo_apikey = "API_KEY_PLACEHOLDER";
@@ -181,6 +185,10 @@ void setup() {
   Serial.begin(115200);
 
   Wire.begin(SDA_PIN, SCL_PIN);
+  // L'APDS-9960 fa clock stretching aggressivo: clock basso + limite alto
+  // rendono affidabili le scritture sul bus condiviso.
+  Wire.setClock(25000);
+  Wire.setClockStretchLimit(150000);
   Serial.flush();
   delay(2000);
   if (!pcf.begin(0x38, &Wire)) {
@@ -191,6 +199,19 @@ void setup() {
   }
   pinMode(PCF_INT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PCF_INT_PIN), pcfInputs_INT, FALLING);
+  // Inizializza l'APDS-9960 (sensore di luce). Qualche tentativo perche' al
+  // primo accesso post power-up puo' fallire finche' il chip non e' pronto.
+  for (byte i = 0; i < 10 && !apds_init_ok; i++) {
+    apds_init_ok = apds.init();
+    if (!apds_init_ok) delay(50);
+  }
+  if (apds_init_ok) {
+    Serial.println(F("APDS-9960 init ok"));
+    apds_light_ok = apds.enableLightSensor(false);
+    Serial.println(apds_light_ok ? F("Light sensor running") : F("Light sensor init FAILED"));
+  } else {
+    Serial.println(F("APDS-9960 init FAILED"));
+  }
 
   Serial.print("RTC");
   byte r = 0;
@@ -244,10 +265,11 @@ void setup() {
              "umidita: %d %%\n"
              "icona: %s\n"
              "wifi rssi: %ld dBm\n"
-             "luminosita: %d/255\n",
+             "luminosita: %d/255\n"
+             "ambient: %d\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
              meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI(),
-             luminosita);
+             luminosita, ambient_light);
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.begin();
@@ -256,6 +278,7 @@ void setup() {
   Serial.printf("HTTPUpdateServer ready! Open http://%s.local%s in your browser\n", host, update_path);
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
   strip.Begin();
+  regolaLuminosita();
   strip.ClearTo(RgbColor(0));
   strip.Show();
   delay(1000);
@@ -556,6 +579,7 @@ void loop() {
       inizioPagina = true;
       Serial.print("pagina=");
       Serial.println(pagina);
+      regolaLuminosita();
     }
   }
   if (stato == 1) {
@@ -705,4 +729,22 @@ char* ggSettStr(byte gs) {
       break;
   }
   return "---";
+}
+
+// Range del sensore di luce ambientale (clear channel) per la regolazione auto,
+// tarato sui valori reali: ~0 al buio, ~18 con luce normale (range compresso, gain 1x).
+#define AMBIENT_BUIO 0    // buio -> LUM_MIN
+#define AMBIENT_LUCE 15   // luce ambiente -> LUM_MAX
+#define LUM_MIN 1
+#define LUM_MAX 20
+
+void regolaLuminosita() {
+  if (apds.readAmbientLight(ambient_light)) {
+    luminosita = constrain(map(ambient_light, AMBIENT_BUIO, AMBIENT_LUCE, LUM_MIN, LUM_MAX), LUM_MIN, LUM_MAX);
+    Serial.print("Luminosita auto=");
+    Serial.print(luminosita);
+    Serial.print(" (ambient=");
+    Serial.print(ambient_light);
+    Serial.println(")");
+  }
 }
