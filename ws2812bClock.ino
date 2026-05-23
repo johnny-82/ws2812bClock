@@ -14,6 +14,7 @@
 #include <SparkFun_APDS9960.h>
 #include <Adafruit_PCF8574.h>
 #include <EEPROM.h>
+#include <DNSServer.h>
 
 Adafruit_PCF8574 pcf;
 
@@ -24,8 +25,18 @@ Adafruit_PCF8574 pcf;
 
 const char* host = "wificlock";
 const char* update_path = "/firmware";
-const char* ssid = STASSID;
-const char* password = STAPSK;
+
+// --- Credenziali WiFi (persistite in EEPROM, con fallback ai default sopra) ---
+#define WIFI_MAGIC 0x7C
+#define WIFI_EEPROM_ADDR 16    // sveglia sta a 0 (pochi byte), wifi da 16
+#define AP_SSID "WificlockSetup"  // access point del portale di configurazione
+char wifi_ssid[33] = STASSID;
+char wifi_pass[65] = STAPSK;
+bool modo_portale = false;       // true mentre il portale di config WiFi e' attivo
+bool richiesta_portale = false;  // settata da SU lungo per aprire il portale a richiesta
+unsigned long portale_t0 = 0;    // istante di avvio del portale (per il timeout)
+#define PORTALE_TIMEOUT 300000UL  // 5 min: se nessuno configura, riavvia e ritenta
+DNSServer dnsServer;             // per il captive portal (redirect a 192.168.4.1)
 
 volatile bool pcfInputs = false;
 void ICACHE_RAM_ATTR pcfInputs_INT() {
@@ -115,6 +126,51 @@ void salvaSveglia() {
   EEPROM.put(SV_EEPROM_ADDR, c);
   EEPROM.commit();
   Serial.printf("Sveglia salvata: %02d:%02d giorni=0x%02X attiva=%d\n", sv_ore, sv_min, sv_giorni, sv_attiva);
+}
+
+struct WifiCfg { uint8_t magic; char ssid[33]; char pass[65]; };
+
+void caricaWifi() {
+  WifiCfg c;
+  EEPROM.get(WIFI_EEPROM_ADDR, c);
+  if (c.magic == WIFI_MAGIC && c.ssid[0]) {
+    c.ssid[32] = 0; c.pass[64] = 0;
+    strncpy(wifi_ssid, c.ssid, sizeof(wifi_ssid));
+    strncpy(wifi_pass, c.pass, sizeof(wifi_pass));
+    Serial.printf("WiFi: credenziali da EEPROM, ssid='%s'\n", wifi_ssid);
+  } else {
+    Serial.printf("WiFi: nessuna config in EEPROM, uso i default ('%s')\n", wifi_ssid);
+  }
+}
+
+void salvaWifi(const char* s, const char* p) {
+  WifiCfg c = { WIFI_MAGIC };
+  strncpy(c.ssid, s, sizeof(c.ssid)); c.ssid[32] = 0;
+  strncpy(c.pass, p, sizeof(c.pass)); c.pass[64] = 0;
+  EEPROM.put(WIFI_EEPROM_ADDR, c);
+  EEPROM.commit();
+  Serial.printf("WiFi: credenziali salvate, ssid='%s'\n", c.ssid);
+}
+
+// Prova a connettersi in STA con le credenziali correnti, con timeout. true se connesso.
+bool connettiWifi(unsigned long timeoutMs) {
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_pass);
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) delay(200);
+  return WiFi.status() == WL_CONNECTED;
+}
+
+// Avvia il portale di configurazione WiFi: access point aperto + captive DNS.
+void avviaPortale() {
+  modo_portale = true;
+  portale_t0 = millis();
+  WiFi.mode(WIFI_AP_STA);          // AP per il portale, STA per lo scan reti
+  WiFi.softAP(AP_SSID);
+  IPAddress ip = WiFi.softAPIP();  // tipicamente 192.168.4.1
+  dnsServer.start(53, "*", ip);    // qualsiasi dominio -> IP del portale
+  Serial.printf("Portale WiFi attivo: rete '%s' -> http://%s\n", AP_SSID, ip.toString().c_str());
 }
 
 // --- Meteo (OpenWeather) ---
@@ -234,8 +290,9 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);  // buzzer spento subito (evita "tic" al boot)
 #endif
-  EEPROM.begin(64);
+  EEPROM.begin(512);
   caricaSveglia();
+  caricaWifi();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   // L'APDS-9960 fa clock stretching aggressivo: clock basso + limite alto
@@ -283,19 +340,12 @@ void setup() {
   if (r <= 128) Serial.println(" trovato");
   setSyncProvider(aggiornaDateTime);
   setSyncInterval(3600);
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  WiFi.begin(ssid, password);
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    WiFi.begin(ssid, password);
-    Serial.println("WiFi failed, retrying.");
-  }
-  // Avvia il client NTP e allinea subito l'RTC all'ora di Internet
-  configTime(TZ_ITALIA, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
-  aggiornaRTCdaNTP(true);
-  scaricaMeteo();  // primo download cosi' la pagina meteo e' subito popolata
-  MDNS.begin(host);
+
+  // LED pronti subito: servono anche per mostrare le istruzioni del portale WiFi
+  strip.Begin();
+  regolaLuminosita();
+  strip.ClearTo(RgbColor(0));
+  strip.Show();
 
   httpUpdater.setup(&httpServer, update_path);
   httpServer.on("/version", []() {
@@ -364,16 +414,54 @@ void setup() {
              luminosita, ambient_light);
     httpServer.send(200, "text/plain", buf);
   });
+  // Portale WiFi: form per inserire SSID/password della nuova rete.
+  httpServer.on("/wifi", []() {
+    String h = "<!doctype html><html><head><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width,initial-scale=1'><title>WiFi Setup</title>"
+               "<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
+               "input{width:100%;padding:6px;margin:4px 0;box-sizing:border-box}button{padding:8px 16px}</style></head><body>";
+    h += "<h2>Configura WiFi</h2><form method=get action=/wifisave>";
+    h += "Rete (SSID):<br><input name=ssid list=reti value='" + String(wifi_ssid) + "'><datalist id=reti>";
+    int n = WiFi.scanNetworks();
+    for (int i = 0; i < n; i++) h += "<option value='" + WiFi.SSID(i) + "'>";
+    h += "</datalist>Password:<br><input name=pass type=password><br><br>";
+    h += "<button type=submit>Salva e riavvia</button></form>";
+    h += "<p>Reti trovate: " + String(n) + "</p></body></html>";
+    httpServer.send(200, "text/html", h);
+  });
+  httpServer.on("/wifisave", []() {
+    salvaWifi(httpServer.arg("ssid").c_str(), httpServer.arg("pass").c_str());
+    httpServer.send(200, "text/html",
+                    "<html><body style='font-family:sans-serif'><h3>Salvato. Riavvio...</h3>"
+                    "<p>Ricollegati alla tua rete WiFi.</p></body></html>");
+    delay(1500);
+    ESP.restart();
+  });
+  // Captive portal: in modalita' portale ogni URL sconosciuto rimanda al form.
+  httpServer.onNotFound([]() {
+    if (modo_portale) {
+      httpServer.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/wifi", true);
+      httpServer.send(302, "text/plain", "");
+    } else {
+      httpServer.send(404, "text/plain", "Not found");
+    }
+  });
   httpServer.begin();
 
-  MDNS.addService("http", "tcp", 80);
-  Serial.printf("HTTPUpdateServer ready! Open http://%s.local%s in your browser\n", host, update_path);
+  // Connessione WiFi: se fallisce entro il timeout, apri il portale di config.
+  if (connettiWifi(20000)) {
+    Serial.printf("WiFi connesso, IP %s\n", WiFi.localIP().toString().c_str());
+    configTime(TZ_ITALIA, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+    aggiornaRTCdaNTP(true);
+    scaricaMeteo();
+    MDNS.begin(host);
+    MDNS.addService("http", "tcp", 80);
+  } else {
+    Serial.println("WiFi non connesso -> portale di configurazione");
+    avviaPortale();
+  }
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
-  strip.Begin();
-  regolaLuminosita();
-  strip.ClearTo(RgbColor(0));
-  strip.Show();
-  delay(1000);
+  delay(500);
 }
 
 #define LONG_PRESS_T 2000L
@@ -435,7 +523,7 @@ void BTN_ACTION(byte id, bool lp = false) {
       break;
     case SU_ID:
       if (lp) {
-        //pressione lunga: nessuna azione
+        if (stato == 0) richiesta_portale = true;  // apri il portale di config WiFi
       } else {
         if (stato == 0) {
           nuova_pagina--;
@@ -471,6 +559,20 @@ void BTN_ACTION(byte id, bool lp = false) {
 }
 
 void loop() {
+  // Modalita' portale WiFi: solo DNS captive + web server + istruzioni sui LED
+  if (modo_portale) {
+    if (millis() - portale_t0 > PORTALE_TIMEOUT) ESP.restart();  // safety: ritenta
+    dnsServer.processNextRequest();
+    httpServer.handleClient();
+    mostraPortale();
+    return;
+  }
+  // Apertura portale su richiesta (SU lungo)
+  if (richiesta_portale) {
+    richiesta_portale = false;
+    avviaPortale();
+    return;
+  }
   // WiFi sempre attivo: server OTA/HTTP e mDNS gestiti ad ogni giro
   httpServer.handleClient();
   MDNS.update();
@@ -871,6 +973,20 @@ void controllaSveglia() {
     sv_minuto_scattato = minutoGiorno;
     Serial.println("SVEGLIA!");
   }
+}
+
+// Modalita' portale WiFi: scorre le istruzioni per connettersi e configurare.
+void mostraPortale() {
+  static unsigned long t = 0;
+  static int pcx = 31;
+  const char* msg = "WIFI SETUP: COLLEGATI ALLA RETE WIFICLOCKSETUP E APRI 192.168.4.1";
+  if (millis() - t < 75) return;
+  t = millis();
+  strip.ClearTo(RgbColor(0));
+  scrivi(msg, FONT_5x3, 2, pcx, 0x0080ff);  // azzurro per distinguere la modalita' setup
+  strip.Show();
+  pcx--;
+  if (pcx < 0 - larghezza(msg, FONT_5x3)) pcx = 31;
 }
 
 // Pagina config: scorre l'indirizzo web per configurare la sveglia da browser.
