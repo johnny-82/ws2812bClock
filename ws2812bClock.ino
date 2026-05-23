@@ -11,7 +11,6 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
-#include <SparkFun_APDS9960.h>
 #include <Adafruit_PCF8574.h>
 
 Adafruit_PCF8574 pcf;
@@ -60,11 +59,12 @@ int cx = 0;
 // globale affidabile (SetLuminance di Lg non scalava nel nostro flusso): la
 // luminosita' la applichiamo noi a mano ai colori, vedi applicaLum().
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart1Ws2812xMethod> strip(NUM_LEDS);
-uint8_t luminosita = 20;  // 0-255, scalata sui colori; regolabile dal vivo via /lum
-//byte tonalita=0, saturazione=255, luminosita=128;
-
-SparkFun_APDS9960 apds = SparkFun_APDS9960();
-uint16_t ambient_light = 0;
+// Luminosita' FISSA (0-255), applicata a mano ai colori in applicaLum(),
+// regolabile dal vivo via /lum. La regolazione automatica col sensore APDS-9960
+// e' stata rimossa: il modulo si resettava di continuo (brown-out quando i LED
+// assorbono corrente) rendendo le letture inaffidabili. Da riattivare (vedi git)
+// solo dopo aver sistemato l'alimentazione/decoupling del sensore.
+uint8_t luminosita = 20;
 
 // --- Meteo (OpenWeather) ---
 const char* meteo_apikey = "API_KEY_PLACEHOLDER";
@@ -191,18 +191,6 @@ void setup() {
   }
   pinMode(PCF_INT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PCF_INT_PIN), pcfInputs_INT, FALLING);
-  // Initialize APDS-9960 (configure I2C and initial values)
-  if (apds.init()) {
-    Serial.println(F("APDS-9960 initialization complete"));
-    // Start running the APDS-9960 light sensor (no interrupts)
-    if (apds.enableLightSensor(false)) {
-      Serial.println(F("Light sensor is now running"));
-    } else {
-      Serial.println(F("Something went wrong during light sensor init!"));
-    }
-  } else {
-    Serial.println(F("Something went wrong during APDS-9960 init!"));
-  }
 
   Serial.print("RTC");
   byte r = 0;
@@ -256,11 +244,10 @@ void setup() {
              "umidita: %d %%\n"
              "icona: %s\n"
              "wifi rssi: %ld dBm\n"
-             "luminosita: %d/255\n"
-             "ambient: %d\n",
+             "luminosita: %d/255\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
              meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI(),
-             luminosita, ambient_light);
+             luminosita);
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.begin();
@@ -269,7 +256,6 @@ void setup() {
   Serial.printf("HTTPUpdateServer ready! Open http://%s.local%s in your browser\n", host, update_path);
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
   strip.Begin();
-  regolaLuminosita();
   strip.ClearTo(RgbColor(0));
   strip.Show();
   delay(1000);
@@ -570,7 +556,6 @@ void loop() {
       inizioPagina = true;
       Serial.print("pagina=");
       Serial.println(pagina);
-      regolaLuminosita();
     }
   }
   if (stato == 1) {
@@ -720,15 +705,4 @@ char* ggSettStr(byte gs) {
       break;
   }
   return "---";
-}
-
-void regolaLuminosita() {
-  if (apds.readAmbientLight(ambient_light)) {
-    luminosita = _min(map(ambient_light, 0, 99, 1, 35),35);
-    Serial.print("Regolazione automatica luminosita=");
-    Serial.print(luminosita);
-    Serial.print(" (");
-    Serial.print(ambient_light);
-    Serial.println(")");
-  }
 }
