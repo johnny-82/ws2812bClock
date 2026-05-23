@@ -67,6 +67,7 @@ uint8_t luminosita = 20;
 
 SparkFun_APDS9960 apds = SparkFun_APDS9960();
 uint16_t ambient_light = 0;
+uint16_t amb_max = 800;      // soglia ambient per luminosita' max (tarabile via /lum?max=NN)
 bool apds_init_ok = false;   // esito init APDS al boot
 bool apds_light_ok = false;  // esito enableLightSensor al boot
 
@@ -208,6 +209,9 @@ void setup() {
   if (apds_init_ok) {
     Serial.println(F("APDS-9960 init ok"));
     apds_light_ok = apds.enableLightSensor(false);
+    // enableLightSensor imposta gain 4x: lo alziamo a 64x per piu' risoluzione
+    // (sensore con poca luce -> conteggi bassi -> regolazione a gradini).
+    apds.setAmbientLightGain(AGAIN_64X);
     Serial.println(apds_light_ok ? F("Light sensor running") : F("Light sensor init FAILED"));
   } else {
     Serial.println(F("APDS-9960 init FAILED"));
@@ -245,14 +249,19 @@ void setup() {
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
   });
-  // Regolazione luminosita' dal vivo: /lum?v=NN (0-255). Senza v restituisce il valore.
+  // /lum?v=NN forza la luminosita' (override temporaneo, 0-255).
+  // /lum?max=NN tara la soglia di luce per il massimo e rilegge il sensore.
   httpServer.on("/lum", []() {
     if (httpServer.hasArg("v")) {
-      int v = httpServer.arg("v").toInt();
-      luminosita = constrain(v, 0, 255);
+      luminosita = constrain(httpServer.arg("v").toInt(), 0, 255);
     }
-    char buf[24];
-    snprintf(buf, sizeof(buf), "luminosita: %d/255\n", luminosita);
+    if (httpServer.hasArg("max")) {
+      amb_max = constrain(httpServer.arg("max").toInt(), 1, 37000);
+      regolaLuminosita();  // applica subito la nuova soglia
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "luminosita: %d/255\nambient: %d\namb_max: %d\n",
+             luminosita, ambient_light, amb_max);
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.on("/status", []() {
@@ -731,16 +740,15 @@ char* ggSettStr(byte gs) {
   return "---";
 }
 
-// Range del sensore di luce ambientale (clear channel) per la regolazione auto,
-// tarato sui valori reali: ~0 al buio, ~18 con luce normale (range compresso, gain 1x).
-#define AMBIENT_BUIO 0    // buio -> LUM_MIN
-#define AMBIENT_LUCE 15   // luce ambiente -> LUM_MAX
+// Regolazione auto (gain ALS 64x: buio ~0, luce stanza ~18, sole centinaia/migliaia).
+// La soglia di luce per il massimo e' la variabile amb_max (tarabile via /lum?max=NN).
+#define AMBIENT_BUIO 0     // buio -> LUM_MIN
 #define LUM_MIN 1
 #define LUM_MAX 20
 
 void regolaLuminosita() {
   if (apds.readAmbientLight(ambient_light)) {
-    luminosita = constrain(map(ambient_light, AMBIENT_BUIO, AMBIENT_LUCE, LUM_MIN, LUM_MAX), LUM_MIN, LUM_MAX);
+    luminosita = constrain(map(ambient_light, AMBIENT_BUIO, amb_max, LUM_MIN, LUM_MAX), LUM_MIN, LUM_MAX);
     Serial.print("Luminosita auto=");
     Serial.print(luminosita);
     Serial.print(" (ambient=");
