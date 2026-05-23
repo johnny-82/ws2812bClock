@@ -424,8 +424,11 @@ void BTN_ACTION(byte id, bool lp = false) {
   switch (id) {
     case SX_ID:
       if (lp) {
-        if (stato == 0) AUTO_NEXT_PAGE = true;       // riprende l'avanzamento auto
-        else { salvaSveglia(); nuovo_stato = 0; }    // esce dalla modifica e salva
+        if (stato == 0) {
+          AUTO_NEXT_PAGE = true;                     // riprende l'avanzamento auto
+          // da Sveglia/Config (fuori dal ciclo auto) riparti dall'orario
+          if (pagina > PAGINA_METEO) nuova_pagina = PAGINA_ORARIO;
+        } else { salvaSveglia(); nuovo_stato = 0; }  // esce dalla modifica e salva
       } else {
         if (stato == 1) pos_curs = (pos_curs + SV_NCAMPI - 1) % SV_NCAMPI;  // cursore <-
       }
