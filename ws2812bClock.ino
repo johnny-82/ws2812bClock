@@ -41,7 +41,6 @@ ESP8266HTTPUpdateServer httpUpdater;
 RTC_DS3231 rtc;
 unsigned long adesso = 0, prima = 0;
 #include <NeoPixelBus.h>
-#include <NeoPixelBusLg.h>
 int cx = 0;
 // I WS2812 sono pilotati via UART1 (DMA), uscita dati FISSA su GPIO2 = D4.
 // Questo metodo e' immune agli NMI del WiFi -> scroll fluido anche con WiFi attivo.
@@ -57,11 +56,11 @@ int cx = 0;
 #define FONT_5x3 0
 #define FONT_8x6 1
 
-// Matrice WS2812 (GRB) su UART1/GPIO2 (D4). Variante "Lg" = luminanza globale
-// (SetLuminance, equivalente a FastLED.setBrightness); NeoGammaNullMethod = niente
-// correzione gamma, per mantenere i colori identici alla resa precedente.
-NeoPixelBusLg<NeoGrbFeature, NeoEsp8266Uart1Ws2812xMethod, NeoGammaNullMethod> strip(NUM_LEDS);
-uint8_t luminosita = 60;
+// Matrice WS2812 (GRB) su UART1/GPIO2 (D4). NeoPixelBus base non ha una luminanza
+// globale affidabile (SetLuminance di Lg non scalava nel nostro flusso): la
+// luminosita' la applichiamo noi a mano ai colori, vedi applicaLum().
+NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart1Ws2812xMethod> strip(NUM_LEDS);
+uint8_t luminosita = 20;  // 0-255, scalata sui colori; regolabile dal vivo via /lum
 //byte tonalita=0, saturazione=255, luminosita=128;
 
 SparkFun_APDS9960 apds = SparkFun_APDS9960();
@@ -237,6 +236,16 @@ void setup() {
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
   });
+  // Regolazione luminosita' dal vivo: /lum?v=NN (0-255). Senza v restituisce il valore.
+  httpServer.on("/lum", []() {
+    if (httpServer.hasArg("v")) {
+      int v = httpServer.arg("v").toInt();
+      luminosita = constrain(v, 0, 255);
+    }
+    char buf[24];
+    snprintf(buf, sizeof(buf), "luminosita: %d/255\n", luminosita);
+    httpServer.send(200, "text/plain", buf);
+  });
   httpServer.on("/status", []() {
     time_t n = now();
     char buf[200];
@@ -246,9 +255,12 @@ void setup() {
              "temp: %.1f C\n"
              "umidita: %d %%\n"
              "icona: %s\n"
-             "wifi rssi: %ld dBm\n",
+             "wifi rssi: %ld dBm\n"
+             "luminosita: %d/255\n"
+             "ambient: %d\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
-             meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI());
+             meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI(),
+             luminosita, ambient_light);
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.begin();
@@ -257,7 +269,6 @@ void setup() {
   Serial.printf("HTTPUpdateServer ready! Open http://%s.local%s in your browser\n", host, update_path);
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
   strip.Begin();
-  strip.SetLuminance(luminosita);
   regolaLuminosita();
   strip.ClearTo(RgbColor(0));
   strip.Show();
@@ -489,7 +500,6 @@ void loop() {
       luminosita = sr.substring(3, sr.length()).toInt();
       Serial.print("luminosita=");
       Serial.println(luminosita);
-      strip.SetLuminance(luminosita);
     }
   }
   if (stato != nuovo_stato) {
@@ -601,7 +611,7 @@ void scrivi(String testo, byte font, int startRiga, int startColonna, unsigned i
         int lp = ledPos(startRiga + r, startColonna + c);
         if (lp >= 0 && lp < NUM_LEDS) {
           b2 = bitRead(b1, 7 - r);
-          strip.SetPixelColor(lp, b2 ? HtmlColor(colore) : HtmlColor(0));
+          strip.SetPixelColor(lp, b2 ? applicaLum(HtmlColor(colore)) : RgbColor(0));
         }
       }
       if (elemento == 11) lunghezza = floor(nc / 3) + 1;
@@ -611,9 +621,17 @@ void scrivi(String testo, byte font, int startRiga, int startColonna, unsigned i
 void disegna(RgbColor img[8][8], int startRiga, int startColonna) {
   for(int c=0;c<8;c++){
     for(int r=0;r<8;r++){
-      strip.SetPixelColor(ledPos(startRiga + r, startColonna + c), img[r][c]);
+      strip.SetPixelColor(ledPos(startRiga + r, startColonna + c), applicaLum(img[r][c]));
     }
   }
+}
+
+// Scala un colore per la luminosita' globale corrente (0-255). NeoPixelBus base
+// non ha una luminanza globale, quindi la applichiamo qui prima di SetPixelColor.
+RgbColor applicaLum(RgbColor c) {
+  return RgbColor((uint16_t)c.R * luminosita / 255,
+                  (uint16_t)c.G * luminosita / 255,
+                  (uint16_t)c.B * luminosita / 255);
 }
 int numEl(const char cod) {
   if (isDigit(cod)) return (cod - '0') + 1;
@@ -706,12 +724,11 @@ char* ggSettStr(byte gs) {
 
 void regolaLuminosita() {
   if (apds.readAmbientLight(ambient_light)) {
-    luminosita = _min(map(ambient_light, 0, 99, 1, 50),50);
+    luminosita = _min(map(ambient_light, 0, 99, 1, 35),35);
     Serial.print("Regolazione automatica luminosita=");
     Serial.print(luminosita);
     Serial.print(" (");
     Serial.print(ambient_light);
     Serial.println(")");
-    strip.SetLuminance(luminosita);
   }
 }
