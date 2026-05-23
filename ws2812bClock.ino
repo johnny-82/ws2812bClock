@@ -76,11 +76,12 @@ bool apds_light_ok = false;  // esito enableLightSensor al boot
 // Una sveglia: orario + giorni della settimana attivi (bit0=Lun .. bit6=Dom).
 // Suona quando il giorno corrente e' attivo all'ora impostata. Persistita in
 // EEPROM (flash emulata) per sopravvivere a reboot/OTA.
-#define SV_MAGIC 0x5A          // marcatore di validita' della config in EEPROM
+#define SV_MAGIC 0x5B          // marcatore di validita' della config in EEPROM
 #define SV_EEPROM_ADDR 0
 uint8_t sv_ore = 7;
 uint8_t sv_min = 0;
-uint8_t sv_giorni = 0;         // nessun giorno attivo = sveglia spenta
+uint8_t sv_giorni = 0;         // giorni attivi (bitmask Lun..Dom)
+bool sv_attiva = true;         // interruttore on/off (conserva i giorni da spenta)
 bool allarme_attivo = false;   // true mentre la sveglia sta "suonando"
 int sv_minuto_scattato = -1;   // minuto del giorno in cui e' gia' scattata (anti-ripetizione)
 const char* GG_SIGLA[7] = { "LU", "MA", "ME", "GI", "VE", "SA", "DO" };
@@ -98,21 +99,21 @@ void buzzer(bool on) {
 int giornoIndex(int wd) { return (wd == 1) ? 6 : (wd - 2); }
 
 void caricaSveglia() {
-  struct { uint8_t magic, ore, min, giorni; } c;
+  struct { uint8_t magic, ore, min, giorni, attiva; } c;
   EEPROM.get(SV_EEPROM_ADDR, c);
   if (c.magic == SV_MAGIC && c.ore < 24 && c.min < 60) {
-    sv_ore = c.ore; sv_min = c.min; sv_giorni = c.giorni;
-    Serial.printf("Sveglia caricata: %02d:%02d giorni=0x%02X\n", sv_ore, sv_min, sv_giorni);
+    sv_ore = c.ore; sv_min = c.min; sv_giorni = c.giorni; sv_attiva = c.attiva;
+    Serial.printf("Sveglia caricata: %02d:%02d giorni=0x%02X attiva=%d\n", sv_ore, sv_min, sv_giorni, sv_attiva);
   } else {
     Serial.println("Sveglia: nessuna config valida in EEPROM, uso default");
   }
 }
 
 void salvaSveglia() {
-  struct { uint8_t magic, ore, min, giorni; } c = { SV_MAGIC, sv_ore, sv_min, sv_giorni };
+  struct { uint8_t magic, ore, min, giorni, attiva; } c = { SV_MAGIC, sv_ore, sv_min, sv_giorni, (uint8_t)sv_attiva };
   EEPROM.put(SV_EEPROM_ADDR, c);
   EEPROM.commit();
-  Serial.printf("Sveglia salvata: %02d:%02d giorni=0x%02X\n", sv_ore, sv_min, sv_giorni);
+  Serial.printf("Sveglia salvata: %02d:%02d giorni=0x%02X attiva=%d\n", sv_ore, sv_min, sv_giorni, sv_attiva);
 }
 
 // --- Meteo (OpenWeather) ---
@@ -313,6 +314,7 @@ void setup() {
   // Pagina web per impostare la sveglia (alternativa ai pulsanti).
   httpServer.on("/sveglia", []() {
     if (httpServer.hasArg("save")) {
+      sv_attiva = httpServer.hasArg("on");
       sv_ore = constrain(httpServer.arg("ore").toInt(), 0, 23);
       sv_min = constrain(httpServer.arg("min").toInt(), 0, 59);
       sv_giorni = 0;
@@ -326,6 +328,7 @@ void setup() {
                "label{display:inline-block;margin:6px 10px 6px 0}input[type=number]{width:3em}"
                "button{margin-top:14px;padding:8px 16px;font-size:1em}</style></head><body>";
     h += "<h2>Sveglia</h2><form method=get action=/sveglia>";
+    h += "<label><input type=checkbox name=on" + String(sv_attiva ? " checked" : "") + "> <b>Attiva</b></label><br><br>";
     h += "Ora: <input type=number name=ore min=0 max=23 value=" + String(sv_ore) + ">";
     h += " : <input type=number name=min min=0 max=59 value=" + String(sv_min) + "><br>";
     const char* gg[7] = { "Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom" };
@@ -335,7 +338,7 @@ void setup() {
       h += "> " + String(gg[i]) + "</label>";
     }
     h += "<input type=hidden name=save value=1><br><button type=submit>Salva</button></form>";
-    h += "<p>Stato: " + String(sv_giorni ? "attiva" : "spenta (nessun giorno)") + "</p>";
+    h += "<p>Stato: " + String((sv_attiva && sv_giorni) ? "ATTIVA" : (!sv_attiva ? "spenta (off)" : "spenta (nessun giorno)")) + "</p>";
     h += "</body></html>";
     httpServer.send(200, "text/html", h);
   });
@@ -379,13 +382,12 @@ void setup() {
 #define PAGINA_ORARIO 1
 #define PAGINA_DATA 2
 #define PAGINA_METEO 3
-#define PAGINA_SVEGLIA1 4
-#define PAGINA_SVEGLIA2 5
-#define PAGINA_CONFIG 6
-#define PAGINA_FINE 7
-// Ultima pagina navigabile: sveglia/config non sono implementate, quindi la
-// navigazione manuale (SU/GIU) cicla solo Orario..Meteo. Alzare quando le si aggiunge.
-#define PAGINA_ULTIMA PAGINA_METEO
+#define PAGINA_SVEGLIA 4
+#define PAGINA_CONFIG 5
+#define PAGINA_FINE 6
+// Ultima pagina navigabile con SU/GIU. Config (web link) arrivera' nello step 3.
+#define PAGINA_ULTIMA PAGINA_SVEGLIA
+#define SV_NCAMPI 10  // campi modifica: 0=on/off,1=ore,2=min,3..9=giorni Lun..Dom
 
 unsigned long t1, t_pagina, t_SX_btn, t_SU_btn, t_GIU_btn, t_DX_btn;
 bool blink = true, AUTO_NEXT_PAGE = true, inizioPagina = true,
@@ -399,6 +401,15 @@ int anno, mese, giorno, ore, minuti, secondi;
 byte pagina = PAGINA_ZERO, nuova_pagina = PAGINA_ORARIO;
 time_t t;
 
+// Modifica il campo della sveglia attualmente sotto il cursore (modalita' setting).
+// 0=ore, 1=minuti (dir +1/-1), 2..8=giorni (toggle, dir ignorato).
+void modificaCampoSveglia(int dir) {
+  if (pos_curs == 0) sv_attiva = !sv_attiva;
+  else if (pos_curs == 1) sv_ore = (sv_ore + 24 + dir) % 24;
+  else if (pos_curs == 2) sv_min = (sv_min + 60 + dir) % 60;
+  else sv_giorni ^= (1 << (pos_curs - 3));
+}
+
 void BTN_ACTION(byte id, bool lp = false) {
   Serial.print("BTN_ACTION(");
   Serial.print(id);
@@ -408,62 +419,44 @@ void BTN_ACTION(byte id, bool lp = false) {
   switch (id) {
     case SX_ID:
       if (lp) {
-        //pressione lunga
-        if (stato == 0) {
-          AUTO_NEXT_PAGE = true;
-        }
-        if (stato == 1) {
-          nuovo_stato = 0;
-        }
-
+        if (stato == 0) AUTO_NEXT_PAGE = true;       // riprende l'avanzamento auto
+        else { salvaSveglia(); nuovo_stato = 0; }    // esce dalla modifica e salva
       } else {
-        //pressione corta
-        if (stato == 1) {
-          pos_curs--;
-          if (pagina == PAGINA_ORARIO && pos_curs < 0) pos_curs = 1;
-          if (pagina == PAGINA_DATA && pos_curs < 0) pos_curs = 2;
-        }
+        if (stato == 1) pos_curs = (pos_curs + SV_NCAMPI - 1) % SV_NCAMPI;  // cursore <-
       }
       break;
     case SU_ID:
       if (lp) {
-        //pressione lunga: nessuna azione (WiFi sempre attivo, OTA sempre disponibile)
+        //pressione lunga: nessuna azione
       } else {
-        //pressione corta
-        nuova_pagina--;
-        if (nuova_pagina < PAGINA_ORARIO) nuova_pagina = PAGINA_ULTIMA;
-        AUTO_NEXT_PAGE = false;
+        if (stato == 0) {
+          nuova_pagina--;
+          if (nuova_pagina < PAGINA_ORARIO) nuova_pagina = PAGINA_ULTIMA;
+          AUTO_NEXT_PAGE = false;
+        } else {
+          modificaCampoSveglia(+1);                  // in modifica: aumenta/toggle
+        }
       }
       break;
     case GIU_ID:
       if (lp) {
-        //pressione lunga
+        //pressione lunga: nessuna azione
       } else {
-        //pressione corta
-        nuova_pagina++;
-        if (nuova_pagina > PAGINA_ULTIMA) nuova_pagina = PAGINA_ORARIO;
-        AUTO_NEXT_PAGE = false;
+        if (stato == 0) {
+          nuova_pagina++;
+          if (nuova_pagina > PAGINA_ULTIMA) nuova_pagina = PAGINA_ORARIO;
+          AUTO_NEXT_PAGE = false;
+        } else {
+          modificaCampoSveglia(-1);                  // in modifica: diminuisci/toggle
+        }
       }
       break;
     case DX_ID:
       if (lp) {
-        //pressione lunga
-        if (stato == 0) {
-          if (pagina == 1) {
-            //modifica ora
-            stato = 1;
-            nuovo_stato = true;
-          }
-        } else {
-          //salva modifica ora
-        }
+        // entra in modifica sveglia (solo dalla pagina sveglia)
+        if (stato == 0 && pagina == PAGINA_SVEGLIA) { nuovo_stato = 1; pos_curs = 0; }
       } else {
-        //pressione corta
-        if (stato == 1) {
-          pos_curs++;
-          if (pagina == PAGINA_ORARIO && pos_curs > 1) pos_curs = 0;
-          if (pagina == PAGINA_DATA && pos_curs > 2) pos_curs = 0;
-        }
+        if (stato == 1) pos_curs = (pos_curs + 1) % SV_NCAMPI;  // cursore ->
       }
       break;
   }
@@ -675,6 +668,9 @@ void loop() {
         if (millis() - t_pagina >= 5000) nuova_pagina = PAGINA_ORARIO;
       }
     }
+    if (pagina == PAGINA_SVEGLIA) {
+      disegnaSveglia(false);  // visualizzazione (non entra nell'avanzamento auto)
+    }
     //if (inizioPagina) nuova_pagina = PAGINA_ORARIO;
     if (nuova_pagina != pagina) {
       pagina = nuova_pagina;
@@ -685,7 +681,8 @@ void loop() {
     }
   }
   if (stato == 1) {
-    //modifica pagina
+    // modalita' setting: per ora solo la sveglia
+    disegnaSveglia(true);
   }
 }
 int larghezza(String testo, byte font) {
@@ -853,7 +850,7 @@ void regolaLuminosita() {
 // Verifica se la sveglia deve scattare: giorno corrente attivo + ora coincidente.
 // Scatta una sola volta per minuto (sv_minuto_scattato evita ripetizioni se silenziata).
 void controllaSveglia() {
-  if (sv_giorni == 0 || allarme_attivo) return;
+  if (!sv_attiva || sv_giorni == 0 || allarme_attivo) return;
   time_t n = now();
   int idx = giornoIndex(weekday(n));
   int minutoGiorno = hour(n) * 60 + minute(n);
@@ -863,6 +860,46 @@ void controllaSveglia() {
     sv_minuto_scattato = minutoGiorno;
     Serial.println("SVEGLIA!");
   }
+}
+
+// Pagina sveglia: HH:MM in alto + 7 segmenti da 3 LED in basso (uno per giorno,
+// Lun..Dom), verde=attivo / rosso=non attivo. In modifica (mod=true) il campo
+// sotto il cursore lampeggia; sui giorni mostra anche la sigla accanto all'ora.
+void disegnaSveglia(bool mod) {
+  static unsigned long tdraw = 0, tblink = 0;
+  static bool bl = true;
+  if (millis() - tdraw < 80) return;  // limita il refresh/Show
+  tdraw = millis();
+  if (millis() - tblink > 300) { bl = !bl; tblink = millis(); }
+  strip.ClearTo(RgbColor(0));
+  // ora HH:MM (font 5x3) sempre a posizione fissa; colore = stato sveglia
+  // (verde ON / rosso OFF). In modifica il campo selezionato lampeggia
+  // coprendolo in nero (cosi' le cifre non si spostano).
+  char hh[3], mm[3];
+  sprintf(hh, "%02d", sv_ore);
+  sprintf(mm, "%02d", sv_min);
+  unsigned int c_ora = sv_attiva ? 0x00ff00 : 0xff0000;  // verde=ON, rosso=OFF
+  scrivi(String(hh) + ":" + mm, FONT_5x3, 0, 1, c_ora);
+  if (mod && !bl) {
+    // pos 0 = on/off: lampeggia tutta l'ora; pos 1 = ore; pos 2 = minuti
+    if (pos_curs == 0) scrivi(String(hh) + ":" + mm, FONT_5x3, 0, 1, 0x000000);
+    else if (pos_curs == 1) scrivi(hh, FONT_5x3, 0, 1, 0x000000);
+    else if (pos_curs == 2) scrivi(mm, FONT_5x3, 0, 1 + larghezza(String(hh) + ":", FONT_5x3), 0x000000);
+  }
+  // in modifica su un giorno: sigla accanto all'ora (es. "LU")
+  if (mod && pos_curs >= 3) scrivi(GG_SIGLA[pos_curs - 3], FONT_5x3, 0, 22, c_ora);
+  // 7 segmenti giorni sulla riga in basso
+  for (int g = 0; g < 7; g++) {
+    bool attivo = sv_giorni & (1 << g);
+    bool sel = mod && (pos_curs == 3 + g);
+    RgbColor c = attivo ? RgbColor(0, 255, 0) : RgbColor(255, 0, 0);
+    for (int k = 0; k < 3; k++) {
+      int lp = ledPos(7, 2 + g * 4 + k);
+      if (lp >= 0 && lp < NUM_LEDS)
+        strip.SetPixelColor(lp, (sel && !bl) ? RgbColor(0) : applicaLum(c));
+    }
+  }
+  strip.Show();
 }
 
 // Suoneria visiva: "SVEGLIA" scorrevole e lampeggiante (rosso) finche' non si
