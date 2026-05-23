@@ -40,11 +40,11 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 RTC_DS3231 rtc;
 unsigned long adesso = 0, prima = 0;
-#define FASTLED_ALLOW_INTERRUPTS 0
-#include <FastLED.h>
-FASTLED_USING_NAMESPACE
+#include <NeoPixelBus.h>
+#include <NeoPixelBusLg.h>
 int cx = 0;
-#define FASTLED_DATA_PIN D0
+// I WS2812 sono pilotati via UART1 (DMA), uscita dati FISSA su GPIO2 = D4.
+// Questo metodo e' immune agli NMI del WiFi -> scroll fluido anche con WiFi attivo.
 #define PCF_INT_PIN D5
 #define SDA_PIN D7
 #define SCL_PIN D6
@@ -54,13 +54,13 @@ int cx = 0;
 #define DX_btn_PCFpin 7
 
 #define NUM_LEDS 256
-#define MAX_POWER_MILLIAMPS 1000
-#define LED_TYPE WS2812B
-#define COLOR_ORDER GRB
 #define FONT_5x3 0
 #define FONT_8x6 1
 
-CRGB leds[NUM_LEDS];
+// Matrice WS2812 (GRB) su UART1/GPIO2 (D4). Variante "Lg" = luminanza globale
+// (SetLuminance, equivalente a FastLED.setBrightness); NeoGammaNullMethod = niente
+// correzione gamma, per mantenere i colori identici alla resa precedente.
+NeoPixelBusLg<NeoGrbFeature, NeoEsp8266Uart1Ws2812xMethod, NeoGammaNullMethod> strip(NUM_LEDS);
 uint8_t luminosita = 60;
 //byte tonalita=0, saturazione=255, luminosita=128;
 
@@ -81,14 +81,10 @@ unsigned long meteo_ultimoFetch = 0;
 // Fuso orario Italia con ora legale automatica (CET/CEST)
 #define TZ_ITALIA "CET-1CEST,M3.5.0,M10.5.0/3"
 
-// --- Gestione WiFi a intermittenza ---
-// Su ESP8266 il WiFi attivo corrompe l'output bit-bang dei WS2812 (scroll
-// scattoso). Per questo il WiFi resta SPENTO durante la visualizzazione e si
-// accende solo a finestre: al boot (per OTA + sync) e brevemente per il meteo.
-#define OTA_BOOT_WINDOW 120000UL  // WiFi acceso 2 min dopo il boot (per OTA)
-#define ONLINE_WINDOW 300000UL    // finestra online da pulsante SU (5 min)
-bool wifi_attivo = false;
-unsigned long wifi_finestra_fine = 0;  // istante in cui spegnere il WiFi (0 = nessuna finestra)
+// --- WiFi sempre attivo ---
+// Con i LED pilotati via UART1/DMA (immune agli NMI) il WiFi puo' restare
+// sempre acceso senza disturbare lo scroll: OTA e gli endpoint /status, /version
+// sono sempre raggiungibili, niente piu' finestre temporizzate.
 
 int colore = 0xff0000;
 
@@ -134,33 +130,9 @@ void aggiornaRTCdaNTP(bool attendi) {
                 tloc->tm_hour, tloc->tm_min, tloc->tm_sec);
 }
 
-// Accende il WiFi e attende la connessione (con timeout). Ritorna true se connesso.
-bool wifiAccendi(unsigned long timeoutMs = 8000) {
-  if (WiFi.status() == WL_CONNECTED) { wifi_attivo = true; return true; }
-  WiFi.forceSleepWake();
-  delay(1);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) delay(50);
-  wifi_attivo = (WiFi.status() == WL_CONNECTED);
-  Serial.println(wifi_attivo ? "WiFi acceso" : "WiFi: connessione fallita");
-  return wifi_attivo;
-}
-
-// Spegne completamente il WiFi (radio in sleep) per non disturbare i LED.
-void wifiSpegni() {
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  WiFi.forceSleepBegin();
-  delay(1);
-  wifi_attivo = false;
-  Serial.println("WiFi spento");
-}
-
 // Disegna la pagina meteo (icona + temperatura) con i dati correnti.
 void disegnaMeteo() {
-  FastLED.clear();
+  strip.ClearTo(RgbColor(0));
   bool notte = (meteo_icona[2] == 'n');
   bool sereno = (meteo_icona[0] == '0' && meteo_icona[1] == '1');
   if (sereno) disegna(notte ? notte_sereno : giorno_sereno, 0, 0);
@@ -247,19 +219,18 @@ void setup() {
   if (r <= 128) Serial.println(" trovato");
   setSyncProvider(aggiornaDateTime);
   setSyncInterval(3600);
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   WiFi.begin(ssid, password);
   while (WiFi.waitForConnectResult() != WL_CONNECTED) {
     WiFi.begin(ssid, password);
     Serial.println("WiFi failed, retrying.");
   }
-  wifi_attivo = true;
   // Avvia il client NTP e allinea subito l'RTC all'ora di Internet
   configTime(TZ_ITALIA, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
   aggiornaRTCdaNTP(true);
   scaricaMeteo();  // primo download cosi' la pagina meteo e' subito popolata
-  // Mantieni il WiFi acceso per una finestra dopo il boot, per consentire l'OTA
-  wifi_finestra_fine = millis() + OTA_BOOT_WINDOW;
   MDNS.begin(host);
 
   httpUpdater.setup(&httpServer, update_path);
@@ -269,16 +240,15 @@ void setup() {
   httpServer.on("/status", []() {
     time_t n = now();
     char buf[200];
-    long resta = wifi_finestra_fine ? (long)(wifi_finestra_fine - millis()) / 1000 : -1;
     snprintf(buf, sizeof(buf),
              "ora: %02d/%02d/%04d %02d:%02d:%02d\n"
              "meteo_ok: %s\n"
              "temp: %.1f C\n"
              "umidita: %d %%\n"
              "icona: %s\n"
-             "finestra OTA: %ld s\n",
+             "wifi rssi: %ld dBm\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
-             meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, resta);
+             meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI());
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.begin();
@@ -286,12 +256,11 @@ void setup() {
   MDNS.addService("http", "tcp", 80);
   Serial.printf("HTTPUpdateServer ready! Open http://%s.local%s in your browser\n", host, update_path);
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
-  FastLED.addLeds<LED_TYPE, FASTLED_DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-    // .setCorrection(TypicalLEDStrip);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, MAX_POWER_MILLIAMPS);
+  strip.Begin();
+  strip.SetLuminance(luminosita);
   regolaLuminosita();
-  FastLED.clear();
-  FastLED.show();
+  strip.ClearTo(RgbColor(0));
+  strip.Show();
   delay(1000);
 }
 
@@ -351,11 +320,7 @@ void BTN_ACTION(byte id, bool lp = false) {
       break;
     case SU_ID:
       if (lp) {
-        //pressione lunga: apri una finestra online (WiFi acceso) per l'OTA
-        if (wifiAccendi()) {
-          wifi_finestra_fine = millis() + ONLINE_WINDOW;
-          Serial.println("Modalita' online attiva (finestra OTA)");
-        }
+        //pressione lunga: nessuna azione (WiFi sempre attivo, OTA sempre disponibile)
       } else {
         //pressione corta
         nuova_pagina--;
@@ -398,16 +363,9 @@ void BTN_ACTION(byte id, bool lp = false) {
 }
 
 void loop() {
-  // Gestione WiFi solo quando acceso (server/mDNS hanno senso solo allora)
-  if (wifi_attivo) {
-    httpServer.handleClient();
-    MDNS.update();
-    // allo scadere della finestra (boot/online) spegni il WiFi -> scroll fluido
-    if (wifi_finestra_fine != 0 && (long)(millis() - wifi_finestra_fine) >= 0) {
-      wifi_finestra_fine = 0;
-      wifiSpegni();
-    }
-  }
+  // WiFi sempre attivo: server OTA/HTTP e mDNS gestiti ad ogni giro
+  httpServer.handleClient();
+  MDNS.update();
   if (pcfInputs) {
     //Serial.println("Interrupt");
     pcfInputs = false;
@@ -531,7 +489,7 @@ void loop() {
       luminosita = sr.substring(3, sr.length()).toInt();
       Serial.print("luminosita=");
       Serial.println(luminosita);
-      FastLED.setBrightness(luminosita);
+      strip.SetLuminance(luminosita);
     }
   }
   if (stato != nuovo_stato) {
@@ -546,11 +504,11 @@ void loop() {
       if (millis() - t1 > 500) {
         t = now();
         t1 = millis();
-        FastLED.clear();
+        strip.ClearTo(RgbColor(0));
         char buf[6];
         sprintf(buf, "%02d%s%02d", hour(t), (blink ? ":" : " "), minute(t));
         scrivi(buf, FONT_8x6, 0, 1, colore);
-        FastLED.show();
+        strip.Show();
         blink = !blink;
       }
       if (AUTO_NEXT_PAGE) {
@@ -567,9 +525,9 @@ void loop() {
         char buf[40];
         sprintf(buf, "%s, %d %s %d", ggSettStr(weekday(t)), day(t), meseStr(month(t)), year(t));
         t1 = millis();
-        FastLED.clear();
+        strip.ClearTo(RgbColor(0));
         scrivi(buf, FONT_5x3, 2, cx, colore);
-        FastLED.show();
+        strip.Show();
         cx--;
         if (AUTO_NEXT_PAGE) {
           if (cx < 0 - larghezza(buf, FONT_5x3)) nuova_pagina = PAGINA_METEO;
@@ -584,17 +542,12 @@ void loop() {
         inizioPagina = false;
         // mostra subito i dati correnti (anche se vecchi)
         disegnaMeteo();
-        FastLED.show();
-        // se scaduti, accendi il WiFi solo ora (pagina statica: niente scatti),
-        // aggiorna e rispegni (a meno che sia in corso una finestra OTA)
+        strip.Show();
+        // WiFi sempre attivo: se i dati sono scaduti, aggiorna e ridisegna
         if (!meteo_ok || millis() - meteo_ultimoFetch >= METEO_REFRESH) {
-          bool finestraAttiva = (wifi_finestra_fine != 0);
-          if (wifiAccendi()) {
-            scaricaMeteo();
-            disegnaMeteo();
-            FastLED.show();
-            if (!finestraAttiva) wifiSpegni();
-          }
+          scaricaMeteo();
+          disegnaMeteo();
+          strip.Show();
         }
       }
       if (AUTO_NEXT_PAGE) {
@@ -648,17 +601,17 @@ void scrivi(String testo, byte font, int startRiga, int startColonna, unsigned i
         int lp = ledPos(startRiga + r, startColonna + c);
         if (lp >= 0 && lp < NUM_LEDS) {
           b2 = bitRead(b1, 7 - r);
-          leds[ledPos(startRiga + r, startColonna + c)] = (b2) ? colore : 0x000000;
-        }  //CHSV( tonalita, saturazione, luminosita);
+          strip.SetPixelColor(lp, b2 ? HtmlColor(colore) : HtmlColor(0));
+        }
       }
       if (elemento == 11) lunghezza = floor(nc / 3) + 1;
     }
   }
 }
-void disegna(CRGB img[8][8], int startRiga, int startColonna) {
+void disegna(RgbColor img[8][8], int startRiga, int startColonna) {
   for(int c=0;c<8;c++){
     for(int r=0;r<8;r++){
-      leds[ledPos(startRiga + r, startColonna + c)] = img[r][c];
+      strip.SetPixelColor(ledPos(startRiga + r, startColonna + c), img[r][c]);
     }
   }
 }
@@ -759,6 +712,6 @@ void regolaLuminosita() {
     Serial.print(" (");
     Serial.print(ambient_light);
     Serial.println(")");
-    FastLED.setBrightness(luminosita);
+    strip.SetLuminance(luminosita);
   }
 }
