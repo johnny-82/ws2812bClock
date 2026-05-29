@@ -79,9 +79,32 @@ uint8_t luminosita = 20;
 
 SparkFun_APDS9960 apds = SparkFun_APDS9960();
 uint16_t ambient_light = 0;
-uint16_t amb_max = 800;      // soglia ambient per luminosita' max (tarabile via /lum?max=NN)
+// Parametri della luminosita' automatica, persistiti in EEPROM (vedi caricaLum/salvaLum).
+uint8_t lum_min = 1;         // luminosita' al buio (0-255)
+uint8_t lum_max = 20;        // luminosita' a piena luce (0-255)
+uint16_t amb_max = 800;      // soglia ambient per cui si raggiunge lum_max
 bool apds_init_ok = false;   // esito init APDS al boot
 bool apds_light_ok = false;  // esito enableLightSensor al boot
+
+// EEPROM: sveglia a 0 (5 byte), luminosita' a 8 (6 byte), wifi a 16.
+#define LUM_MAGIC 0x4C
+#define LUM_EEPROM_ADDR 8
+void caricaLum() {
+  struct { uint8_t magic, lmin, lmax; uint16_t amax; } c;
+  EEPROM.get(LUM_EEPROM_ADDR, c);
+  if (c.magic == LUM_MAGIC && c.lmin <= c.lmax && c.amax > 0) {
+    lum_min = c.lmin; lum_max = c.lmax; amb_max = c.amax;
+    Serial.printf("Lum caricata: min=%d max=%d amb_max=%d\n", lum_min, lum_max, amb_max);
+  } else {
+    Serial.println("Lum: nessuna config valida in EEPROM, uso default");
+  }
+}
+void salvaLum() {
+  struct { uint8_t magic, lmin, lmax; uint16_t amax; } c = { LUM_MAGIC, lum_min, lum_max, amb_max };
+  EEPROM.put(LUM_EEPROM_ADDR, c);
+  EEPROM.commit();
+  Serial.printf("Lum salvata: min=%d max=%d amb_max=%d\n", lum_min, lum_max, amb_max);
+}
 
 // --- Sveglia ---
 // Una sveglia: orario + giorni della settimana attivi (bit0=Lun .. bit6=Dom).
@@ -96,12 +119,16 @@ bool sv_attiva = true;         // interruttore on/off (conserva i giorni da spen
 bool allarme_attivo = false;   // true mentre la sveglia sta "suonando"
 int sv_minuto_scattato = -1;   // minuto del giorno in cui e' gia' scattata (anti-ripetizione)
 const char* GG_SIGLA[7] = { "LU", "MA", "ME", "GI", "VE", "SA", "DO" };
-// Buzzer attivo su D3 (GPIO0). NB: GPIO0 e' pin di strapping (deve stare alto al
-// boot); il buzzer va pilotato in modo da non tenere basso il pin all'accensione.
+// Buzzer passivo su D3 (GPIO0). Pilotato con tone()/noTone() perche' un piezo
+// passivo richiede onda quadra in banda audio (no DC). Frequenza tarabile a
+// orecchio via /buzz?f=NN. NB: GPIO0 e' pin di strapping, ma noTone() lo lascia
+// a LOW (lo stato impostato in setup), quindi nessun problema al boot.
 #define BUZZER_PIN D3
+uint16_t buzz_freq = 3000;  // tarata a orecchio sul nostro piezo
 void buzzer(bool on) {
 #ifdef BUZZER_PIN
-  digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
+  if (on) tone(BUZZER_PIN, buzz_freq);
+  else    noTone(BUZZER_PIN);
 #else
   (void)on;
 #endif
@@ -292,6 +319,7 @@ void setup() {
 #endif
   EEPROM.begin(512);
   caricaSveglia();
+  caricaLum();
   caricaWifi();
 
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -309,22 +337,27 @@ void setup() {
   }
   pinMode(PCF_INT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PCF_INT_PIN), pcfInputs_INT, FALLING);
-  // Inizializza l'APDS-9960 (sensore di luce). Qualche tentativo perche' al
-  // primo accesso post power-up puo' fallire finche' il chip non e' pronto.
-  for (byte i = 0; i < 10 && !apds_init_ok; i++) {
+  // Inizializza l'APDS-9960 (sensore di luce). Lascia decantare ~200ms dopo il
+  // power-up del chip, poi prova fino a 20 volte (la SparkFun lib e' a volte
+  // intermittente al boot).
+  delay(200);
+  for (byte i = 0; i < 20 && !apds_init_ok; i++) {
     apds_init_ok = apds.init();
-    if (!apds_init_ok) delay(50);
+    if (!apds_init_ok) delay(100);
   }
   if (apds_init_ok) {
     Serial.println(F("APDS-9960 init ok"));
     apds_light_ok = apds.enableLightSensor(false);
-    // enableLightSensor imposta gain 4x: lo alziamo a 64x per piu' risoluzione
-    // (sensore con poca luce -> conteggi bassi -> regolazione a gradini).
-    apds.setAmbientLightGain(AGAIN_64X);
-    Serial.println(apds_light_ok ? F("Light sensor running") : F("Light sensor init FAILED"));
+    if (apds_light_ok) apds.setAmbientLightGain(AGAIN_64X);
   } else {
-    Serial.println(F("APDS-9960 init FAILED"));
+    Serial.println(F("APDS-9960 init FAILED (provo fallback raw)"));
   }
+  // Rete di sicurezza: la lib SparkFun rifiuta talvolta init() e/o
+  // enableLightSensor() anche quando il chip e' raggiungibile e funzionante.
+  // Il fallback scrive direttamente CONTROL+ENABLE e verifica con rilettura,
+  // cosi' readAmbientLight() funziona comunque (vedi apdsForceLightOn).
+  if (!apds_light_ok) apds_light_ok = apdsForceLightOn();
+  Serial.println(apds_light_ok ? F("Light sensor running") : F("Light sensor init FAILED"));
 
   Serial.print("RTC");
   byte r = 0;
@@ -364,19 +397,112 @@ void setup() {
     h += "</body></html>";
     httpServer.send(200, "text/html", h);
   });
-  // /lum?v=NN forza la luminosita' (override temporaneo, 0-255).
-  // /lum?max=NN tara la soglia di luce per il massimo e rilegge il sensore.
+  // Pagina luminosita': form per min/max e soglia ambient, persistiti in EEPROM.
+  // Query param ?v=NN forza la luminosita' come override temporaneo (non salvato).
+  // ?reinit riprova l'init dell'APDS senza dover riavviare la scheda.
   httpServer.on("/lum", []() {
     if (httpServer.hasArg("v")) {
       luminosita = constrain(httpServer.arg("v").toInt(), 0, 255);
     }
-    if (httpServer.hasArg("max")) {
-      amb_max = constrain(httpServer.arg("max").toInt(), 1, 37000);
-      regolaLuminosita();  // applica subito la nuova soglia
+    if (httpServer.hasArg("reinit")) {
+      apds_init_ok = apds.init();
+      if (apds_init_ok) {
+        apds_light_ok = apds.enableLightSensor(false);
+        if (apds_light_ok) apds.setAmbientLightGain(AGAIN_64X);
+      }
+      // Sempre: prova il fallback raw se la lib non e' riuscita
+      if (!apds_light_ok) apds_light_ok = apdsForceLightOn();
     }
+    if (httpServer.hasArg("save")) {
+      uint8_t nmin = constrain(httpServer.arg("lmin").toInt(), 0, 255);
+      uint8_t nmax = constrain(httpServer.arg("lmax").toInt(), 0, 255);
+      if (nmin > nmax) { uint8_t t = nmin; nmin = nmax; nmax = t; }
+      lum_min = nmin; lum_max = nmax;
+      amb_max = constrain(httpServer.arg("amb").toInt(), 1, 37000);
+      salvaLum();
+      regolaLuminosita();  // applica subito i nuovi parametri
+    }
+    // Lettura "live" del sensore ad ogni GET, cosi' la pagina e' sempre fresca.
+    bool read_ok = apds.readAmbientLight(ambient_light);
+    String h = "<!doctype html><html><head><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width,initial-scale=1'>"
+               "<title>Luminosita</title><style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
+               "label{display:block;margin:10px 0 4px}input[type=number]{width:5em}"
+               "button{margin-top:14px;padding:8px 16px;font-size:1em}"
+               "p.s{color:#555;font-size:.9em;margin:18px 0 4px}</style></head><body>";
+    h += "<h2>Luminosita</h2><form method=get action=/lum>";
+    h += "<label>Min (al buio, 0-255): <input type=number name=lmin min=0 max=255 value=" + String(lum_min) + "></label>";
+    h += "<label>Max (a piena luce, 0-255): <input type=number name=lmax min=0 max=255 value=" + String(lum_max) + "></label>";
+    h += "<label>Soglia ambient per il max: <input type=number name=amb min=1 max=37000 value=" + String(amb_max) + "></label>";
+    h += "<input type=hidden name=save value=1><button type=submit>Salva</button></form>";
+    h += "<p class=s>Stato attuale (la pagina rilegge il sensore ad ogni apertura)</p>";
+    h += "<p>luminosita: " + String(luminosita) + "/255<br>";
+    h += "ambient: " + String(ambient_light) + (read_ok ? "" : " (lettura FALLITA)") + "<br>";
+    h += "APDS init: " + String(apds_init_ok ? "ok" : "FAIL") + " - light sensor: " + String(apds_light_ok ? "ok" : "FAIL") + "</p>";
+    h += "<p><a href=/lum?reinit=1>Ri-inizializza sensore</a></p>";
+    h += "</body></html>";
+    httpServer.send(200, "text/html", h);
+  });
+  // /buzz?f=NN imposta la frequenza del tono (Hz) e suona un test.
+  // /buzz?t=MS regola la durata del test (default 500 ms). Senza argomenti suona
+  // solo un beep alla frequenza corrente. Frequenza in RAM: dopo reboot torna al default.
+  httpServer.on("/buzz", []() {
+    if (httpServer.hasArg("f")) {
+      buzz_freq = constrain(httpServer.arg("f").toInt(), 50, 20000);
+    }
+    uint16_t dur = httpServer.hasArg("t") ? constrain(httpServer.arg("t").toInt(), 50, 5000) : 500;
+#ifdef BUZZER_PIN
+    tone(BUZZER_PIN, buzz_freq, dur);
+#endif
     char buf[64];
-    snprintf(buf, sizeof(buf), "luminosita: %d/255\nambient: %d\namb_max: %d\n",
-             luminosita, ambient_light, amb_max);
+    snprintf(buf, sizeof(buf), "buzz freq: %u Hz, test %u ms\n", buzz_freq, dur);
+    httpServer.send(200, "text/plain", buf);
+  });
+  // /i2c?addr=0x39 -> probe raw del bus I2C senza coinvolgere la libreria SparkFun.
+  // /i2c?addr=0x39&reg=0x92 -> legge 1 byte dal registro indicato.
+  // /i2c?addr=0x39&reg=0x80&val=0x03 -> scrive val nel registro, poi rilegge per
+  // verifica. Accetta esadecimale (0x..) o decimale. Default 0x39 (APDS-9960).
+  httpServer.on("/i2c", []() {
+    auto parseNum = [](const String& s) -> uint8_t {
+      String t = s; t.trim();
+      return (t.startsWith("0x") || t.startsWith("0X"))
+               ? (uint8_t)strtol(t.c_str(), NULL, 16)
+               : (uint8_t)t.toInt();
+    };
+    uint8_t addr = httpServer.hasArg("addr") ? parseNum(httpServer.arg("addr")) : 0x39;
+    char buf[128];
+    if (httpServer.hasArg("reg")) {
+      uint8_t reg = parseNum(httpServer.arg("reg"));
+      uint8_t err_w = 0;
+      if (httpServer.hasArg("val")) {
+        uint8_t val = parseNum(httpServer.arg("val"));
+        Wire.beginTransmission(addr);
+        Wire.write(reg);
+        Wire.write(val);
+        err_w = Wire.endTransmission();
+      }
+      Wire.beginTransmission(addr);
+      Wire.write(reg);
+      uint8_t err_r = Wire.endTransmission();
+      uint8_t got = (err_r == 0) ? Wire.requestFrom((int)addr, 1) : 0;
+      if (got == 1) {
+        uint8_t v = Wire.read();
+        snprintf(buf, sizeof(buf),
+                 "addr 0x%02X reg 0x%02X = 0x%02X (%u)%s\n",
+                 addr, reg, v, v,
+                 httpServer.hasArg("val") ? (err_w == 0 ? " [write ok]" : " [write FAIL]") : "");
+      } else {
+        snprintf(buf, sizeof(buf),
+                 "addr 0x%02X reg 0x%02X: read FAIL (endTx=%u, got=%u)\n",
+                 addr, reg, err_r, got);
+      }
+    } else {
+      Wire.beginTransmission(addr);
+      uint8_t err = Wire.endTransmission();
+      // codici: 0=ok, 1=data too long, 2=NACK su addr, 3=NACK su data, 4=other, 5=timeout
+      snprintf(buf, sizeof(buf), "addr 0x%02X: %s (endTransmission=%u)\n",
+               addr, err == 0 ? "ACK" : "NO ACK", err);
+    }
     httpServer.send(200, "text/plain", buf);
   });
   // Pagina web per impostare la sveglia (alternativa ai pulsanti).
@@ -956,15 +1082,33 @@ char* ggSettStr(byte gs) {
   return "---";
 }
 
+// Fallback per attivare l'ALS quando enableLightSensor() della SparkFun lib fallisce
+// (verifica interna del registro ENABLE va in errore anche se il chip e' sano):
+// scriviamo direttamente CONTROL = 0x0B (AGAIN_64X | PGAIN_4X) e ENABLE = 0x03 (PON|AEN),
+// poi proviamo readAmbientLight() come prova di funzionamento (e' il test che
+// davvero ci interessa: il chip e' OK se restituisce dati validi).
+// Verificato 2026-05-29.
+bool apdsForceLightOn() {
+  delay(10);  // lascia decantare eventuali transitori del bus dopo enableLightSensor
+  Wire.beginTransmission(0x39);
+  Wire.write(0x8F); Wire.write(0x0B);
+  Wire.endTransmission();
+  delay(2);
+  Wire.beginTransmission(0x39);
+  Wire.write(0x80); Wire.write(0x03);
+  Wire.endTransmission();
+  delay(150);  // un'integrazione ATIME piena prima di leggere
+  uint16_t v;
+  return apds.readAmbientLight(v);
+}
+
 // Regolazione auto (gain ALS 64x: buio ~0, luce stanza ~18, sole centinaia/migliaia).
-// La soglia di luce per il massimo e' la variabile amb_max (tarabile via /lum?max=NN).
-#define AMBIENT_BUIO 0     // buio -> LUM_MIN
-#define LUM_MIN 1
-#define LUM_MAX 20
+// Min/max della luminosita' e soglia ambient sono in EEPROM (vedi caricaLum/salvaLum).
+#define AMBIENT_BUIO 0     // buio -> lum_min
 
 void regolaLuminosita() {
   if (apds.readAmbientLight(ambient_light)) {
-    luminosita = constrain(map(ambient_light, AMBIENT_BUIO, amb_max, LUM_MIN, LUM_MAX), LUM_MIN, LUM_MAX);
+    luminosita = constrain(map(ambient_light, AMBIENT_BUIO, amb_max, lum_min, lum_max), lum_min, lum_max);
     Serial.print("Luminosita auto=");
     Serial.print(luminosita);
     Serial.print(" (ambient=");
@@ -985,6 +1129,8 @@ void controllaSveglia() {
     allarme_attivo = true;
     sv_minuto_scattato = minutoGiorno;
     Serial.println("SVEGLIA!");
+  } else if (hour(n) != sv_ore || minute(n) != sv_min) {
+    sv_minuto_scattato = -1;  // usciti dal minuto-target: ri-arma per le prossime volte
   }
 }
 
@@ -1075,12 +1221,20 @@ void disegnaSveglia(bool mod) {
 }
 
 // Suoneria visiva: "SVEGLIA" scorrevole e lampeggiante (rosso) finche' non si
-// preme un tasto. buzzer() e' un hook per un futuro cicalino.
+// preme un tasto. Buzzer: 4 beep corti in 1s + 1s di pausa, ciclico.
 void mostraAllarme() {
   static unsigned long t_scroll = 0, t_blink = 0;
   static int acx = 31;
   static bool vis = true;
-  if (millis() - t_blink > 350) { vis = !vis; t_blink = millis(); buzzer(vis); }
+  // Buzzer: periodo 1s. Nei primi 500 ms quattro beep da ~63 ms ON / ~62 ms OFF;
+  // nei successivi 500 ms silenzio. Aggiorna il pin solo sui fronti per non
+  // riavviare tone() ad ogni iterazione.
+  unsigned long phase = millis() % 1000;
+  bool buzz_on = (phase < 500) && ((phase % 125) < 63);
+  static bool buzz_prev = false;
+  if (buzz_on != buzz_prev) { buzzer(buzz_on); buzz_prev = buzz_on; }
+  // Visivo: scroll + lampeggio "SVEGLIA" indipendenti dal buzzer.
+  if (millis() - t_blink > 350) { vis = !vis; t_blink = millis(); }
   if (millis() - t_scroll > 60) {
     t_scroll = millis();
     strip.ClearTo(RgbColor(0));
