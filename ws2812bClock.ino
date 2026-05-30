@@ -204,9 +204,17 @@ void avviaPortale() {
 const char* meteo_apikey = "API_KEY_PLACEHOLDER";
 const char* meteo_localita = "dragoni,IT";
 #define METEO_REFRESH 600000UL  // ricarica i dati al massimo ogni 10 minuti
-float meteo_temp = 0;
-int meteo_umidita = 0;
-char meteo_icona[4] = "01d";  // codice icona OpenWeather (es. 01d, 04n)
+// Previsione a 3 slot da una sola chiamata /forecast (step di 3h):
+// 0 = piu' vicino ad ora, 1 = +3h, 2 = +6h.
+#define METEO_NSLOT 3
+struct MeteoSlot {
+  float temp;
+  int umidita;
+  char icona[4];  // codice icona OpenWeather (es. 01d, 04n)
+};
+MeteoSlot meteo_slot[METEO_NSLOT] = {
+  { 0, 0, "01d" }, { 0, 0, "01d" }, { 0, 0, "01d" }
+};
 bool meteo_ok = false;
 unsigned long meteo_ultimoFetch = 0;
 
@@ -263,45 +271,124 @@ void aggiornaRTCdaNTP(bool attendi) {
                 tloc->tm_hour, tloc->tm_min, tloc->tm_sec);
 }
 
-// Disegna la pagina meteo (icona + temperatura) con i dati correnti.
-void disegnaMeteo() {
-  strip.ClearTo(RgbColor(0));
-  bool notte = (meteo_icona[2] == 'n');
-  bool sereno = (meteo_icona[0] == '0' && meteo_icona[1] == '1');
-  if (sereno) disegna(notte ? notte_sereno : giorno_sereno, 0, 0);
-  else disegna(notte ? notte_variabile : giorno_variabile, 0, 0);
-  char buf[8];
-  if (meteo_ok) sprintf(buf, "%d*", (int)lround(meteo_temp));
-  else sprintf(buf, "--*");
-  int x = 8 + (24 - larghezza(buf, FONT_5x3)) / 2;
-  scrivi(buf, FONT_5x3, 2, x, colore);
+// Mappa il codice icona OpenWeather (es. "10d") sull'icona 8x8 da mostrare.
+// Per sereno/variabile c'e' la variante giorno/notte (suffisso d/n), le altre
+// condizioni usano un'unica icona a sfondo nero.
+Icona8 iconaPer(const char* code) {
+  bool notte = (code[2] == 'n');
+  char a = code[0], b = code[1];
+  if (a == '0' && b == '1') return notte ? notte_sereno : giorno_sereno;     // sereno
+  if (a == '0' && b == '2') return notte ? notte_variabile : giorno_variabile;  // poco nuvoloso
+  if (a == '0' && b == '3') return nuvolo;                                    // nubi sparse
+  if (a == '0' && b == '4') return coperto;                                   // coperto
+  if (a == '0' && b == '9') return pioggia;                                   // pioggia/rovesci
+  if (a == '1' && b == '0') return pioggia;                                   // pioggia
+  if (a == '1' && b == '1') return temporale;                                 // temporale
+  if (a == '1' && b == '3') return neve;                                      // neve
+  if (a == '5') return nebbia;                                                // nebbia/foschia
+  return nuvolo;
 }
 
-// Scarica le condizioni meteo correnti da OpenWeather e aggiorna le variabili.
+// Imposta un pixel applicando la luminosita', con clipping fuori matrice.
+void setPx(int riga, int colonna, RgbColor c) {
+  int lp = ledPos(riga, colonna);
+  if (lp >= 0 && lp < NUM_LEDS) strip.SetPixelColor(lp, applicaLum(c));
+}
+
+// Disegna un'icona 8x8 a una colonna qualsiasi (anche negativa/>31): le colonne
+// fuori matrice vengono ignorate, quindi va bene per lo scrolling orizzontale.
+void disegnaScroll(Icona8 img, int startColonna) {
+  for (int c = 0; c < 8; c++)
+    for (int r = 0; r < 8; r++)
+      setPx(r, startColonna + c, img[r][c]);
+}
+
+// Freccetta ">" (chevron 3x5) usata come separatore tra i blocchi della scena.
+void disegnaFreccia(int col, RgbColor c) {
+  setPx(2, col, c);
+  setPx(3, col + 1, c);
+  setPx(4, col + 2, c);
+  setPx(5, col + 1, c);
+  setPx(6, col, c);
+}
+
+// --- Scena meteo da scorrere: [icona][temp] > [icona][temp] > [icona][temp] ---
+#define METEO_GAP_ICO_TXT 1  // spazio tra icona e temperatura
+#define METEO_SEP_W 5        // larghezza riservata al separatore tra blocchi
+char meteo_txt[METEO_NSLOT][8];
+Icona8 meteo_ico[METEO_NSLOT];
+int meteo_blkX[METEO_NSLOT];  // colonna iniziale (relativa) dell'icona di ogni blocco
+int meteo_sceneW = 0;         // larghezza totale della scena
+
+// Prepara testi, icone e posizioni dei blocchi in base ai dati correnti.
+void preparaScenaMeteo() {
+  int x = 0;
+  for (int i = 0; i < METEO_NSLOT; i++) {
+    if (meteo_ok) sprintf(meteo_txt[i], "%d*", (int)lround(meteo_slot[i].temp));
+    else sprintf(meteo_txt[i], "--*");
+    meteo_ico[i] = iconaPer(meteo_slot[i].icona);
+    meteo_blkX[i] = x;
+    x += 8 + METEO_GAP_ICO_TXT + larghezza(meteo_txt[i], FONT_5x3);
+    if (i < METEO_NSLOT - 1) x += METEO_SEP_W;
+  }
+  meteo_sceneW = x;
+}
+
+// Disegna la scena meteo con l'icona+temperatura di ogni slot e le frecce di
+// separazione, traslata di 'off' colonne (per lo scrolling).
+void disegnaScenaMeteo(int off) {
+  for (int i = 0; i < METEO_NSLOT; i++) {
+    disegnaScroll(meteo_ico[i], off + meteo_blkX[i]);
+    scrivi(meteo_txt[i], FONT_5x3, 2, off + meteo_blkX[i] + 8 + METEO_GAP_ICO_TXT, colore);
+    if (i < METEO_NSLOT - 1)
+      disegnaFreccia(off + meteo_blkX[i + 1] - METEO_SEP_W + 1, RgbColor(120, 120, 255));
+  }
+}
+
+// Scarica la previsione da OpenWeather (una sola chiamata /forecast, step di 3h)
+// e popola i 3 slot: 0=ora, 1=+3h, 2=+6h.
 void scaricaMeteo() {
   if (WiFi.status() != WL_CONNECTED) return;
   WiFiClient client;
   HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/weather?q=";
+  String url = "http://api.openweathermap.org/data/2.5/forecast?q=";
   url += meteo_localita;
   url += "&appid=";
   url += meteo_apikey;
-  url += "&lang=it&units=metric";
+  url += "&lang=it&units=metric&cnt=";
+  url += METEO_NSLOT;
   http.begin(client, url);
   int code = http.GET();
   Serial.print("Meteo HTTP ");
   Serial.println(code);
   if (code == HTTP_CODE_OK) {
+    // Filtro: tieni solo i campi utili di ogni elemento della lista, cosi' il
+    // documento resta piccolo in RAM (importante su ESP8266).
+    JsonDocument filter;
+    filter["list"][0]["main"]["temp"] = true;
+    filter["list"][0]["main"]["humidity"] = true;
+    filter["list"][0]["weather"][0]["icon"] = true;
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, http.getStream());
+    DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
     if (!err) {
-      meteo_temp = doc["main"]["temp"] | 0.0f;
-      meteo_umidita = doc["main"]["humidity"] | 0;
-      const char* ic = doc["weather"][0]["icon"] | "01d";
-      strncpy(meteo_icona, ic, 3);
-      meteo_icona[3] = 0;
-      meteo_ok = true;
-      Serial.printf("Meteo: %.1f gradi, %d%%, icona %s\n", meteo_temp, meteo_umidita, meteo_icona);
+      JsonArray lista = doc["list"].as<JsonArray>();
+      int n = 0;
+      for (JsonObject it : lista) {
+        if (n >= METEO_NSLOT) break;
+        meteo_slot[n].temp = it["main"]["temp"] | 0.0f;
+        meteo_slot[n].umidita = it["main"]["humidity"] | 0;
+        const char* ic = it["weather"][0]["icon"] | "01d";
+        strncpy(meteo_slot[n].icona, ic, 3);
+        meteo_slot[n].icona[3] = 0;
+        n++;
+      }
+      if (n > 0) {
+        meteo_ok = true;
+        Serial.printf("Meteo: ora %.1f/%s, +3h %.1f/%s, +6h %.1f/%s\n",
+                      meteo_slot[0].temp, meteo_slot[0].icona,
+                      meteo_slot[1].temp, meteo_slot[1].icona,
+                      meteo_slot[2].temp, meteo_slot[2].icona);
+      }
     } else {
       Serial.print("Errore parsing JSON meteo: ");
       Serial.println(err.c_str());
@@ -538,19 +625,22 @@ void setup() {
   });
   httpServer.on("/status", []() {
     time_t n = now();
-    char buf[200];
+    char buf[320];
     snprintf(buf, sizeof(buf),
              "ora: %02d/%02d/%04d %02d:%02d:%02d\n"
              "meteo_ok: %s\n"
-             "temp: %.1f C\n"
-             "umidita: %d %%\n"
-             "icona: %s\n"
+             "ora:  %.1f C %d%% %s\n"
+             "+3h:  %.1f C %d%% %s\n"
+             "+6h:  %.1f C %d%% %s\n"
              "wifi rssi: %ld dBm\n"
              "luminosita: %d/255\n"
              "ambient: %d\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
-             meteo_ok ? "si" : "no", meteo_temp, meteo_umidita, meteo_icona, (long)WiFi.RSSI(),
-             luminosita, ambient_light);
+             meteo_ok ? "si" : "no",
+             meteo_slot[0].temp, meteo_slot[0].umidita, meteo_slot[0].icona,
+             meteo_slot[1].temp, meteo_slot[1].umidita, meteo_slot[1].icona,
+             meteo_slot[2].temp, meteo_slot[2].umidita, meteo_slot[2].icona,
+             (long)WiFi.RSSI(), luminosita, ambient_light);
     httpServer.send(200, "text/plain", buf);
   });
   // Portale WiFi: form per inserire SSID/password della nuova rete.
@@ -901,20 +991,24 @@ void loop() {
     }
     if (pagina == PAGINA_METEO) {
       if (inizioPagina) {
-        t_pagina = millis();
         inizioPagina = false;
-        // mostra subito i dati correnti (anche se vecchi)
-        disegnaMeteo();
-        strip.Show();
-        // WiFi sempre attivo: se i dati sono scaduti, aggiorna e ridisegna
-        if (!meteo_ok || millis() - meteo_ultimoFetch >= METEO_REFRESH) {
-          scaricaMeteo();
-          disegnaMeteo();
-          strip.Show();
-        }
+        // WiFi sempre attivo: se i dati sono scaduti, aggiorna prima di scorrere
+        if (!meteo_ok || millis() - meteo_ultimoFetch >= METEO_REFRESH) scaricaMeteo();
+        preparaScenaMeteo();
+        cx = 31;  // la scena entra da destra
       }
-      if (AUTO_NEXT_PAGE) {
-        if (millis() - t_pagina >= 5000) nuova_pagina = PAGINA_ORARIO;
+      if (millis() - t1 > 75) {
+        t1 = millis();
+        strip.ClearTo(RgbColor(0));
+        disegnaScenaMeteo(cx);
+        strip.Show();
+        cx--;
+        // scena uscita tutta a sinistra: in auto avanza all'orario, in manuale
+        // riparte da capo (scroll in loop sulla pagina), come la pagina data.
+        if (cx < 0 - meteo_sceneW) {
+          if (AUTO_NEXT_PAGE) nuova_pagina = PAGINA_ORARIO;
+          else inizioPagina = true;
+        }
       }
     }
     if (pagina == PAGINA_SVEGLIA) {
