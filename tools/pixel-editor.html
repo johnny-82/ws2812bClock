@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel / Icon Editor — gestione file .h</title>
+<style>
+  :root { --bg:#1e1e22; --panel:#27272e; --line:#3a3a44; --txt:#e6e6ea; --mut:#9a9aa6; --accent:#4ea1ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:18px; font-weight:600; }
+  header p { margin:4px 0 0; font-size:13px; color:var(--mut); }
+  main { display:flex; flex-wrap:wrap; gap:20px; padding:20px; align-items:flex-start; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); }
+
+  #gridWrap { background:#000; padding:6px; border-radius:6px; touch-action:none; display:inline-block;
+              background-image:linear-gradient(45deg,#161616 25%,transparent 25%),linear-gradient(-45deg,#161616 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#161616 75%),linear-gradient(-45deg,transparent 75%,#161616 75%);
+              background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; }
+  #grid { display:grid; gap:1px; }
+  .cell { width:var(--cs,24px); height:var(--cs,24px); border-radius:2px; cursor:crosshair; outline:1px solid #00000040; }
+
+  /* Libreria icone */
+  #iconList { display:flex; flex-direction:column; gap:5px; max-height:300px; overflow:auto; }
+  .ico { display:flex; align-items:center; gap:9px; padding:5px 6px; border:2px solid transparent;
+         border-radius:7px; cursor:pointer; background:#00000020; }
+  .ico.sel { border-color:var(--accent); }
+  .ico canvas { height:34px; width:auto; image-rendering:pixelated; background:#000; border-radius:3px; outline:1px solid #ffffff14; }
+  .ico input.nm { background:#1b1b20; border:1px solid var(--line); color:var(--txt); border-radius:5px;
+                  padding:3px 6px; font-size:12px; flex:1; min-width:60px; font-family:monospace; }
+  .ico .sz { color:var(--mut); font-size:11px; font-family:monospace; }
+  .ico .mini { background:none; border:none; color:#9a9aa6; cursor:pointer; font-size:14px; padding:0 3px; }
+  .ico .mini:hover { color:var(--txt); }
+
+  /* Palette */
+  #palette { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow:auto; }
+  .swatch { display:flex; align-items:center; gap:8px; padding:4px 6px; border:2px solid transparent;
+            border-radius:6px; cursor:pointer; background:#00000020; }
+  .swatch.sel { border-color:var(--accent); }
+  .chip { width:22px; height:22px; border-radius:5px; outline:1px solid #ffffff20; flex:none; cursor:pointer; }
+  .swatch input.nm { background:#1b1b20; border:1px solid var(--line); color:var(--txt); border-radius:5px;
+                     padding:3px 6px; font-size:12px; width:74px; font-family:monospace; }
+  .swatch .idx { color:var(--mut); font-size:11px; font-family:monospace; width:18px; text-align:right; }
+  .swatch .bg { margin-left:auto; background:#1b1b20; border:1px solid var(--line); color:var(--mut); cursor:pointer; font-size:11px; border-radius:5px; padding:2px 5px; }
+  .swatch .bg.on { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
+  .swatch .del { background:none; border:none; color:#a55; cursor:pointer; font-size:15px; padding:0 4px; }
+
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .tools { display:flex; gap:6px; flex-wrap:wrap; }
+  .tools button.on { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
+  label { font-size:13px; color:#b8b8c2; }
+  input[type=text], input[type=number], select { background:#1b1b20; border:1px solid var(--line); color:var(--txt);
+                    border-radius:6px; padding:6px 9px; font-size:13px; }
+  input[type=number]{ width:60px; }
+  input[type=range]{ vertical-align:middle; }
+  button { background:#33333d; color:var(--txt); border:1px solid var(--line); border-radius:6px;
+           padding:7px 12px; font-size:13px; cursor:pointer; }
+  button:hover { background:#3d3d48; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
+  textarea { width:100%; background:#15151a; color:#cfe6ff; border:1px solid var(--line);
+             border-radius:6px; padding:10px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px;
+             line-height:1.5; resize:vertical; }
+  #code { min-height:300px; }
+  #preamble { min-height:90px; }
+  .hint { font-size:12px; color:var(--mut); margin:8px 0 0; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; }
+  .seg button.on { background:var(--accent); color:#06121f; font-weight:600; }
+  details summary { cursor:pointer; color:var(--mut); font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pixel / Icon Editor</h1>
+  <p>Gestisce un intero file <code>.h</code>: palette condivisa + libreria di icone (dimensioni per-icona). Apri/modifica/salva, niente dipendenze, stato salvato nel browser.</p>
+</header>
+
+<main>
+  <!-- ============ DISEGNO ============ -->
+  <div class="card">
+    <h2>Disegno — <span id="curName">icona</span></h2>
+    <div id="gridWrap"><div id="grid"></div></div>
+    <div class="row">
+      <span class="tools">
+        <button data-tool="pen" class="on" title="Penna (B)">✏️ Penna</button>
+        <button data-tool="eraser" title="Gomma (E)">🩹 Gomma</button>
+        <button data-tool="fill" title="Riempimento contiguo (G)">🪣 Fill</button>
+        <button data-tool="picker" title="Pipetta (I) — Alt+click">💧 Pipetta</button>
+      </span>
+    </div>
+    <div class="row">
+      <button id="clear">Svuota</button>
+      <button id="fillAll">Riempi tutto</button>
+      <label><input type="checkbox" id="lumOn"> Anteprima luminosità</label>
+      <input id="lum" type="range" min="1" max="255" value="20" disabled>
+      <span id="lumval" style="font-size:12px;color:var(--mut)">20</span>
+    </div>
+    <p class="hint">Click/trascina per dipingere. Tasto destro = sfondo. Alt+click = pipetta. Scorciatoie B/E/G/I.</p>
+  </div>
+
+  <!-- ============ LIBRERIA ICONE ============ -->
+  <div class="card" style="min-width:240px">
+    <h2>Icone nel file</h2>
+    <div id="iconList"></div>
+    <div class="row">
+      <button id="addIcon">+ Icona</button>
+      <button id="dupIcon">Duplica</button>
+    </div>
+    <div class="row">
+      <label>L</label><input type="number" id="cols" min="1" max="128" value="8">
+      <label>×&nbsp;A</label><input type="number" id="rows" min="1" max="128" value="8">
+      <button id="resize" title="Ridimensiona l'icona corrente">Ridimensiona</button>
+    </div>
+    <div class="row">
+      <label>Zoom</label><input id="zoom" type="range" min="6" max="48" value="24">
+    </div>
+  </div>
+
+  <!-- ============ COLORI ============ -->
+  <div class="card">
+    <h2>Colori</h2>
+    <div class="row" style="margin-top:0">
+      <span class="seg" id="modeSeg">
+        <button data-mode="indexed" class="on">Indicizzata</button>
+        <button data-mode="rgb">RGB libero</button>
+      </span>
+    </div>
+    <p class="hint" id="modeHint">Indicizzata: palette di <code>#define</code> condivisa (formato meteo.h).</p>
+
+    <div id="palBox">
+      <div id="palette"></div>
+      <div class="row">
+        <button id="addColor">+ Colore</button>
+        <button id="loadMeteo">Preset meteo.h</button>
+      </div>
+    </div>
+
+    <div id="rgbBox" style="display:none">
+      <div class="row" style="margin-top:0">
+        <label>Colore</label>
+        <input type="color" id="rgbPick" value="#ffcc00" style="width:44px;height:30px;padding:0;border:none;background:none">
+        <label>Sfondo</label>
+        <input type="color" id="rgbBg" value="#000000" style="width:44px;height:30px;padding:0;border:none;background:none">
+      </div>
+      <p class="hint">RGB libero: ogni cella un colore; export <code>uint8[H][W][3]</code>.</p>
+    </div>
+  </div>
+
+  <!-- ============ FILE / CODICE ============ -->
+  <div class="card" style="flex:1; min-width:380px">
+    <h2>File .h</h2>
+    <div class="row" style="margin-top:0">
+      <label for="fileName">Nome file</label>
+      <input id="fileName" type="text" value="icone.h" size="14">
+      <button id="newFile">Nuovo</button>
+      <button id="openFile">Apri…</button>
+      <input id="filePick" type="file" accept=".h,.hpp,.txt,text/plain" style="display:none">
+      <button id="saveFile" class="primary">Salva .h ⤓</button>
+    </div>
+    <details id="preDet">
+      <summary>Preambolo (header-guard / #include / typedef) — editabile</summary>
+      <textarea id="preamble" spellcheck="false"></textarea>
+      <p class="hint">Tutto ciò che non è palette né icona. Rigenerato così com'è prima dei <code>#define</code> e degli array. Footer (<code>#endif</code>) gestito a parte.</p>
+    </details>
+
+    <div class="row">
+      <button id="gen" class="primary">Genera codice ↧</button>
+      <button id="imp">Importa dal testo ↥</button>
+      <button id="copy">Copia</button>
+      <button id="png">PNG icona ⤓</button>
+    </div>
+    <textarea id="code" spellcheck="false"></textarea>
+    <p class="hint">«Genera» scrive l'intero file qui sotto. «Importa» rilegge il file .h dalla casella (palette + tutte le icone).</p>
+  </div>
+</main>
+
+<script>
+"use strict";
+const LS = 'pixelEditor.v2';
+
+const PRESET_METEO = [
+  { name:'blk', hex:'#000000' },
+  { name:'azr', hex:'#007fff' },
+  { name:'bls', hex:'#000064' },
+  { name:'ylw', hex:'#ff9650' },
+  { name:'wht', hex:'#c8c8ff' },
+  { name:'gry', hex:'#6e6e82' },
+  { name:'rai', hex:'#286eff' },
+  { name:'sno', hex:'#d2d2ff' },
+];
+
+// ---- Util ----
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function hexToRgb(hex){ const n=parseInt((hex||'#000000').slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function rgbToHex(r,g,b){ return '#'+[r,g,b].map(x=>clamp(x|0,0,255).toString(16).padStart(2,'0')).join(''); }
+function makeGrid(w,h,fill){ return Array.from({length:h}, ()=>Array(w).fill(fill)); }
+function guardOf(fname){ return '_'+(fname||'icone.h').replace(/\.[^.]*$/,'').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'').toUpperCase()+'_H_'; }
+function defaultPreamble(fname){ const g=guardOf(fname);
+  return `#ifndef ${g}\n#define ${g}\n#include <NeoPixelBus.h>\n\ntypedef RgbColor (*Icona8)[8];`; }
+
+// ---- Stato documento ----
+function freshDoc(){
+  return { mode:'indexed', fileName:'icone.h',
+    preamble: defaultPreamble('icone.h'), footer:'#endif',
+    palette:[{name:'blk',hex:'#000000'},{name:'wht',hex:'#ffffff'}], bgIdx:0,
+    rgbBg:'#000000', rgbPick:'#ffcc00', selIdx:1, zoom:24,
+    icons:[{name:'icona', w:8, h:8, grid:makeGrid(8,8,0)}], cur:0 };
+}
+let doc = loadState() || freshDoc();
+
+let tool='pen', lumOn=false, lum=20, painting=false;
+
+const $ = id => document.getElementById(id);
+function curIcon(){ return doc.icons[doc.cur]; }
+function cellHexVal(v){ if (doc.mode==='indexed'){ const p=doc.palette[v]||doc.palette[0]; return p?p.hex:'#000000'; } return v||doc.rgbBg; }
+function applyLum(hex){ if(!lumOn) return hex; const [r,g,b]=hexToRgb(hex); return rgbToHex(r*lum/255|0,g*lum/255|0,b*lum/255|0); }
+function paintValue(){ return doc.mode==='indexed' ? doc.selIdx : doc.rgbPick; }
+function bgValue(){ return doc.mode==='indexed' ? (doc.bgIdx||0) : doc.rgbBg; }
+
+// ============ GRIGLIA ============
+const gridEl=$('grid'); let cellEls=[];
+function buildGrid(){
+  const ic=curIcon();
+  $('curName').textContent=ic.name;
+  $('cols').value=ic.w; $('rows').value=ic.h;
+  gridEl.style.setProperty('--cs', doc.zoom+'px');
+  gridEl.style.gridTemplateColumns=`repeat(${ic.w}, var(--cs))`;
+  gridEl.style.gridTemplateRows=`repeat(${ic.h}, var(--cs))`;
+  gridEl.innerHTML=''; cellEls=[];
+  for(let r=0;r<ic.h;r++){ cellEls[r]=[];
+    for(let c=0;c<ic.w;c++){
+      const d=document.createElement('div'); d.className='cell';
+      const rr=r, cc=c;
+      d.addEventListener('pointerdown', e=>{ e.preventDefault(); onDown(rr,cc,e); });
+      d.addEventListener('pointerenter', e=>{ if(painting) onDrag(rr,cc,e); });
+      gridEl.appendChild(d); cellEls[r][c]=d;
+    }
+  }
+  redraw();
+}
+function paintCell(r,c,v){ curIcon().grid[r][c]=v; cellEls[r][c].style.background=applyLum(cellHexVal(v)); }
+function redraw(){ const g=curIcon().grid;
+  for(let r=0;r<curIcon().h;r++) for(let c=0;c<curIcon().w;c++) cellEls[r][c].style.background=applyLum(cellHexVal(g[r][c])); }
+
+function onDown(r,c,e){
+  if (e.altKey || tool==='picker'){ pick(r,c); return; }
+  painting=true;
+  if (tool==='fill'){ floodFill(r,c, e.button===2?bgValue():paintValue()); refreshIconThumb(); save(); return; }
+  paintCell(r,c, e.button===2?bgValue():paintValue());
+}
+function onDrag(r,c,e){
+  if (tool==='picker'||tool==='fill') return;
+  paintCell(r,c, tool==='eraser'?bgValue():paintValue());
+}
+function pick(r,c){ const v=curIcon().grid[r][c];
+  if (doc.mode==='indexed'){ doc.selIdx=v; renderPalette(); }
+  else { doc.rgbPick=(v||doc.rgbBg); $('rgbPick').value=doc.rgbPick; } }
+function floodFill(r,c,to){ const g=curIcon().grid, from=g[r][c]; if(from===to) return;
+  const st=[[r,c]];
+  while(st.length){ const [y,x]=st.pop();
+    if(y<0||x<0||y>=curIcon().h||x>=curIcon().w) continue;
+    if(g[y][x]!==from) continue;
+    paintCell(y,x,to); st.push([y+1,x],[y-1,x],[y,x+1],[y,x-1]); } }
+gridEl.addEventListener('contextmenu', e=>e.preventDefault());
+window.addEventListener('pointerup', ()=>{ if(painting){ painting=false; refreshIconThumb(); save(); } });
+
+// ============ TOOLS ============
+document.querySelectorAll('.tools button').forEach(b=>b.addEventListener('click', ()=>{ tool=b.dataset.tool;
+  document.querySelectorAll('.tools button').forEach(x=>x.classList.toggle('on',x===b)); }));
+window.addEventListener('keydown', e=>{
+  if (/input|textarea|select/i.test(e.target.tagName)) return;
+  const map={b:'pen',e:'eraser',g:'fill',i:'picker'}, t=map[e.key.toLowerCase()];
+  if(t){ tool=t; document.querySelectorAll('.tools button').forEach(x=>x.classList.toggle('on',x.dataset.tool===t)); } });
+
+// ============ LIBRERIA ICONE ============
+const listEl=$('iconList');
+function drawThumb(cv, ic){ cv.width=ic.w; cv.height=ic.h; const cx=cv.getContext('2d');
+  for(let r=0;r<ic.h;r++) for(let c=0;c<ic.w;c++){ cx.fillStyle=iconCellHex(ic,ic.grid[r][c]); cx.fillRect(c,r,1,1); } }
+function iconCellHex(ic,v){ if(doc.mode==='indexed'){ const p=doc.palette[v]||doc.palette[0]; return p?p.hex:'#000'; } return v||doc.rgbBg; }
+function renderIconList(){
+  listEl.innerHTML='';
+  doc.icons.forEach((ic,i)=>{
+    const el=document.createElement('div'); el.className='ico'+(i===doc.cur?' sel':'');
+    el.innerHTML=`<canvas></canvas><input class="nm" value="${ic.name}">
+      <span class="sz">${ic.w}×${ic.h}</span>
+      <button class="mini dup" title="Duplica">⧉</button>
+      <button class="mini del" title="Elimina">🗑</button>`;
+    drawThumb(el.querySelector('canvas'), ic);
+    el.addEventListener('click', e=>{ if(e.target.matches('input,button')) return; doc.cur=i; buildGrid(); renderIconList(); save(); });
+    el.querySelector('.nm').addEventListener('input', e=>{ ic.name=e.target.value.trim()||('icona'+i); if(i===doc.cur)$('curName').textContent=ic.name; save(); });
+    el.querySelector('.dup').addEventListener('click', ()=>duplicateIcon(i));
+    el.querySelector('.del').addEventListener('click', ()=>deleteIcon(i));
+    listEl.appendChild(el);
+  });
+}
+function refreshIconThumb(){ const el=listEl.children[doc.cur]; if(el) drawThumb(el.querySelector('canvas'), curIcon()); }
+function addIcon(){ const ic=curIcon();
+  doc.icons.push({name:'icona'+doc.icons.length, w:ic?ic.w:8, h:ic?ic.h:8, grid:makeGrid(ic?ic.w:8, ic?ic.h:8, bgValue())});
+  doc.cur=doc.icons.length-1; buildGrid(); renderIconList(); save(); }
+function duplicateIcon(i){ const s=doc.icons[i];
+  doc.icons.splice(i+1,0,{name:s.name+'_copy', w:s.w, h:s.h, grid:s.grid.map(r=>r.slice())});
+  doc.cur=i+1; buildGrid(); renderIconList(); save(); }
+function deleteIcon(i){ if(doc.icons.length<=1){ alert('Serve almeno un\'icona.'); return; }
+  if(!confirm(`Eliminare l'icona "${doc.icons[i].name}"?`)) return;
+  doc.icons.splice(i,1); if(doc.cur>=doc.icons.length) doc.cur=doc.icons.length-1; if(doc.cur>i) doc.cur--;
+  buildGrid(); renderIconList(); save(); }
+$('addIcon').addEventListener('click', addIcon);
+$('dupIcon').addEventListener('click', ()=>duplicateIcon(doc.cur));
+
+// dimensioni icona corrente
+$('resize').addEventListener('click', ()=>{
+  const w=clamp(+$('cols').value||8,1,128), h=clamp(+$('rows').value||8,1,128), ic=curIcon();
+  const g=makeGrid(w,h,bgValue());
+  for(let r=0;r<Math.min(h,ic.h);r++) for(let c=0;c<Math.min(w,ic.w);c++) g[r][c]=ic.grid[r][c];
+  ic.w=w; ic.h=h; ic.grid=g; buildGrid(); renderIconList(); save();
+});
+$('zoom').value=doc.zoom;
+$('zoom').addEventListener('input', e=>{ doc.zoom=+e.target.value; gridEl.style.setProperty('--cs',doc.zoom+'px'); save(); });
+
+// ============ MODALITÀ ============
+const palBox=$('palBox'), rgbBox=$('rgbBox');
+document.querySelectorAll('#modeSeg button').forEach(b=>b.addEventListener('click', ()=>setMode(b.dataset.mode)));
+function setMode(mode){
+  if(mode===doc.mode){ applyModeUI(); return; }
+  if(mode==='rgb'){ doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(v=>{const p=doc.palette[v]||doc.palette[0];return p?p.hex:'#000000';}))); }
+  else { const map={}; doc.palette.forEach((p,i)=>map[p.hex.toLowerCase()]=i);
+    doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(hex=>{ hex=(hex||doc.rgbBg).toLowerCase();
+      if(!(hex in map)){ doc.palette.push({name:'c'+doc.palette.length,hex}); map[hex]=doc.palette.length-1; } return map[hex]; })));
+    const bgHex=(doc.rgbBg||'#000000').toLowerCase();
+    doc.bgIdx = (bgHex in map) ? map[bgHex] : doc.palette.findIndex(p=>p.hex.toLowerCase()===bgHex);
+    if(doc.bgIdx<0) doc.bgIdx=0; }
+  doc.mode=mode; applyModeUI(); buildGrid(); renderIconList(); save();
+}
+function applyModeUI(){
+  const ix=doc.mode==='indexed';
+  palBox.style.display=ix?'':'none'; rgbBox.style.display=ix?'none':'';
+  document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.mode===doc.mode));
+  $('modeHint').textContent=ix?'Indicizzata: palette di #define condivisa (formato meteo.h).'
+                              :'RGB libero: ogni cella un colore; export uint8[H][W][3].';
+  if(ix) renderPalette();
+}
+
+// ============ PALETTE ============
+const palEl=$('palette');
+function renderPalette(){
+  palEl.innerHTML='';
+  doc.palette.forEach((p,i)=>{
+    const s=document.createElement('div'); s.className='swatch'+(i===doc.selIdx?' sel':'');
+    const isBg = i===(doc.bgIdx||0);
+    s.innerHTML=`<span class="idx">${i}</span><input type="color" class="chip" value="${p.hex}">
+      <input type="text" class="nm" value="${p.name}">
+      <button class="bg${isBg?' on':''}" title="Usa come sfondo (gomma)">${isBg?'⌂ BG':'⌂'}</button>
+      <button class="del" title="Rimuovi">✕</button>`;
+    s.addEventListener('click', e=>{ if(e.target.matches('input,button')) return; doc.selIdx=i; renderPalette(); });
+    s.querySelector('.chip').addEventListener('input', e=>{ p.hex=e.target.value; redraw(); renderIconList(); save(); });
+    s.querySelector('.nm').addEventListener('input', e=>{ p.name=e.target.value.trim()||('c'+i); save(); });
+    s.querySelector('.bg').addEventListener('click', ()=>{ doc.bgIdx=i; renderPalette(); save(); });
+    s.querySelector('.del').addEventListener('click', ()=>removeColor(i));
+    palEl.appendChild(s);
+  });
+}
+function removeColor(i){
+  if(doc.palette.length<=1){ alert('Serve almeno un colore.'); return; }
+  if(i===(doc.bgIdx||0)){ alert('È il colore di sfondo: scegline un altro come sfondo (⌂) prima di rimuoverlo.'); return; }
+  doc.palette.splice(i,1);
+  const bg=doc.bgIdx||0, newBg = bg>i ? bg-1 : bg;   // indice sfondo dopo lo splice
+  doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(v=> v===i?newBg : v>i?v-1 : v)));
+  doc.bgIdx=newBg;
+  if(doc.selIdx>=doc.palette.length) doc.selIdx=doc.palette.length-1;
+  if(doc.selIdx===i) doc.selIdx=doc.bgIdx||0; else if(doc.selIdx>i) doc.selIdx--;
+  renderPalette(); redraw(); renderIconList(); save();
+}
+$('addColor').addEventListener('click', ()=>{ doc.palette.push({name:'c'+doc.palette.length,hex:'#ffffff'});
+  doc.selIdx=doc.palette.length-1; renderPalette(); save(); });
+$('loadMeteo').addEventListener('click', ()=>{ if(!confirm('Sostituire la palette con il preset meteo.h?')) return;
+  doc.palette=PRESET_METEO.map(p=>({...p})); doc.bgIdx=0;
+  doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(v=> v<doc.palette.length?v:0)));
+  doc.selIdx=Math.min(doc.selIdx,doc.palette.length-1); renderPalette(); redraw(); renderIconList(); save(); });
+
+$('rgbPick').value=doc.rgbPick; $('rgbBg').value=doc.rgbBg;
+$('rgbPick').addEventListener('input', e=>{ doc.rgbPick=e.target.value; save(); });
+$('rgbBg').addEventListener('input', e=>{ doc.rgbBg=e.target.value; if(doc.mode==='rgb'){redraw();renderIconList();} save(); });
+
+// ============ LUMINOSITÀ ============
+$('lumOn').addEventListener('change', e=>{ lumOn=e.target.checked; $('lum').disabled=!lumOn; redraw(); });
+$('lum').addEventListener('input', e=>{ lum=+e.target.value; $('lumval').textContent=lum; redraw(); });
+
+// ============ SVUOTA / RIEMPI ============
+$('clear').addEventListener('click', ()=>{ const ic=curIcon(); ic.grid=makeGrid(ic.w,ic.h,bgValue()); redraw(); refreshIconThumb(); save(); });
+$('fillAll').addEventListener('click', ()=>{ const ic=curIcon(); ic.grid=makeGrid(ic.w,ic.h,paintValue()); redraw(); refreshIconThumb(); save(); });
+
+// ============ GENERAZIONE .h ============
+function genIcon(ic){
+  if(doc.mode==='indexed'){
+    const rows=ic.grid.map(r=>'  {'+r.map(v=>(doc.palette[v]||doc.palette[0]).name).join(',')+'}').join(',\n');
+    return `RgbColor ${ic.name}[${ic.h}][${ic.w}]{\n${rows}\n};`;
+  }
+  const rows=ic.grid.map(r=>'  {'+r.map(hex=>{const[a,b,c]=hexToRgb(hex);return `{${a},${b},${c}}`;}).join(',')+'}').join(',\n');
+  return `const uint8_t ${ic.name}[${ic.h}][${ic.w}][3] = {\n${rows}\n};`;
+}
+function genHeader(){
+  let out = (doc.preamble||'').replace(/\s+$/,'');
+  if(out) out+='\n\n';
+  if(doc.mode==='indexed' && doc.palette.length){
+    out += doc.palette.map(p=>{ const[r,g,b]=hexToRgb(p.hex); return `#define ${p.name} RgbColor(${r},${g},${b})`; }).join('\n')+'\n\n';
+  }
+  out += doc.icons.map(genIcon).join('\n');
+  if(doc.footer && doc.footer.trim()) out += '\n\n'+doc.footer.trim()+'\n';
+  else out += '\n';
+  return out;
+}
+$('gen').addEventListener('click', ()=>{ $('code').value=genHeader(); });
+$('copy').addEventListener('click', async ()=>{ const ta=$('code'); if(!ta.value.trim()) ta.value=genHeader();
+  try{ await navigator.clipboard.writeText(ta.value); }catch(_){ ta.select(); document.execCommand('copy'); } });
+$('png').addEventListener('click', ()=>{ const ic=curIcon(), cv=document.createElement('canvas'); cv.width=ic.w; cv.height=ic.h;
+  const cx=cv.getContext('2d'); for(let r=0;r<ic.h;r++) for(let c=0;c<ic.w;c++){ cx.fillStyle=iconCellHex(ic,ic.grid[r][c]); cx.fillRect(c,r,1,1); }
+  const a=document.createElement('a'); a.download=ic.name+'.png'; a.href=cv.toDataURL('image/png'); a.click(); });
+
+// ============ PARSING .h ============
+function findBlockEnd(text,open){ let d=0; for(let i=open;i<text.length;i++){ if(text[i]==='{')d++; else if(text[i]==='}'){ d--; if(d===0) return i; } } return -1; }
+function parseHeader(text){
+  // palette: #define NAME RgbColor(r,g,b)  (decimale o 0x..)
+  const palette=[], palRe=/#define\s+(\w+)\s+RgbColor\s*\(([^)]*)\)/g; let m;
+  while((m=palRe.exec(text))){ const n=m[2].split(',').map(s=>Number(s.trim())); palette.push({name:m[1], hex:rgbToHex(n[0]||0,n[1]||0,n[2]||0)}); }
+  // icone: RgbColor NAME[H][W]{...};  oppure  const uint8_t NAME[H][W][3] = {...};
+  const icons=[], icoFulls=[], declRe=/(?:RgbColor|const\s+uint8_t)\s+(\w+)\s*\[(\d+)\]\[(\d+)\](\[3\])?/g;
+  while((m=declRe.exec(text))){
+    const name=m[1], H=+m[2], W=+m[3], isRgb=!!m[4];
+    const open=text.indexOf('{', m.index+m[0].length); if(open<0) continue;
+    const end=findBlockEnd(text,open); if(end<0) continue;
+    const body=text.slice(open+1,end);
+    const semi=text.indexOf(';',end); const stop=semi<0?end+1:semi+1;
+    icoFulls.push(text.slice(m.index,stop));
+    let grid;
+    if(isRgb){ const nums=(body.match(/\d+/g)||[]).map(Number); grid=[]; let k=0;
+      for(let r=0;r<H;r++){ const row=[]; for(let c=0;c<W;c++){ row.push(rgbToHex(nums[k++]||0,nums[k++]||0,nums[k++]||0)); } grid.push(row); } }
+    else { const toks=(body.match(/[A-Za-z_]\w*/g)||[]); grid=[]; let k=0;
+      for(let r=0;r<H;r++){ const row=[]; for(let c=0;c<W;c++){ row.push(toks[k++]); } grid.push(row); } }
+    icons.push({name,w:W,h:H,grid,isRgb});
+    declRe.lastIndex=stop;
+  }
+  if(!icons.length) throw new Error('Nessun array icona riconosciuto.');
+  const mode = palette.length ? 'indexed' : 'rgb';
+  // nomi -> indici (modalità indicizzata)
+  if(mode==='indexed'){ const idx={}; palette.forEach((p,i)=>idx[p.name]=i);
+    icons.forEach(ic=>{ if(ic.isRgb) return;
+      ic.grid=ic.grid.map(r=>r.map(nm=>{ if(!(nm in idx)){ palette.push({name:nm,hex:'#ffffff'}); idx[nm]=palette.length-1; } return idx[nm]; })); }); }
+  icons.forEach(ic=>delete ic.isRgb);
+  // preambolo / footer = testo residuo
+  let left=text;
+  for(const f of icoFulls) left=left.replace(f,'');
+  left=left.replace(/^[ \t]*#define\s+\w+\s+RgbColor\s*\([^)]*\)[^\n]*\n?/gm,'');
+  let footer='', preamble=left; const ei=left.lastIndexOf('#endif');
+  if(ei>=0){ footer=left.slice(ei).trim(); preamble=left.slice(0,ei); }
+  preamble=preamble.replace(/\n{3,}/g,'\n\n').trim();
+  const pal = palette.length?palette:[{name:'blk',hex:'#000000'}];
+  let bgIdx = pal.findIndex(p=>p.name==='blk');
+  if(bgIdx<0) bgIdx = pal.findIndex(p=>p.hex.toLowerCase()==='#000000');
+  if(bgIdx<0) bgIdx = 0;
+  return { mode, palette: pal, bgIdx, icons, preamble, footer:footer||'#endif' };
+}
+function loadParsed(p, fileName){
+  doc.mode=p.mode; doc.palette=p.palette; doc.icons=p.icons; doc.preamble=p.preamble; doc.footer=p.footer;
+  doc.bgIdx=p.bgIdx||0; doc.cur=0; doc.selIdx=Math.min(1,doc.palette.length-1);
+  if(fileName) doc.fileName=fileName;
+  $('fileName').value=doc.fileName; $('preamble').value=doc.preamble;
+  applyModeUI(); buildGrid(); renderIconList(); save();
+}
+$('imp').addEventListener('click', ()=>{ const txt=$('code').value.trim();
+  if(!txt){ alert('Incolla prima il codice .h nella casella.'); return; }
+  try{ loadParsed(parseHeader(txt)); }catch(err){ alert('Import fallito: '+err.message); } });
+
+// ============ FILE: nuovo / apri / salva ============
+$('fileName').value=doc.fileName;
+$('fileName').addEventListener('input', e=>{ doc.fileName=e.target.value.trim()||'icone.h'; save(); });
+$('newFile').addEventListener('click', ()=>{ if(!confirm('Creare un nuovo file? Le modifiche non salvate andranno perse.')) return;
+  doc=freshDoc(); $('fileName').value=doc.fileName; $('preamble').value=doc.preamble; $('zoom').value=doc.zoom;
+  $('rgbPick').value=doc.rgbPick; $('rgbBg').value=doc.rgbBg; applyModeUI(); buildGrid(); renderIconList(); save(); });
+$('openFile').addEventListener('click', ()=>$('filePick').click());
+$('filePick').addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=()=>{ try{ loadParsed(parseHeader(rd.result), f.name); $('code').value=genHeader(); }
+    catch(err){ alert('Apertura fallita: '+err.message); } }; rd.readAsText(f); e.target.value=''; });
+$('saveFile').addEventListener('click', ()=>{ const txt=genHeader(); $('code').value=txt;
+  const a=document.createElement('a'); a.download=doc.fileName||'icone.h';
+  a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); a.click(); URL.revokeObjectURL(a.href); });
+
+// preambolo editabile
+$('preamble').value=doc.preamble;
+$('preamble').addEventListener('input', e=>{ doc.preamble=e.target.value; save(); });
+
+// ============ PERSISTENZA ============
+function save(){ try{ localStorage.setItem(LS, JSON.stringify(doc)); }catch(_){} }
+function loadState(){ try{ const s=localStorage.getItem(LS); return s?JSON.parse(s):null; }catch(_){ return null; } }
+
+// ============ AVVIO ============
+applyModeUI(); buildGrid(); renderIconList(); $('gen').click();
+</script>
+</body>
+</html>
