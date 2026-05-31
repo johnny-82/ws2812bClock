@@ -529,13 +529,24 @@ void setup() {
       luminosita = constrain(httpServer.arg("v").toInt(), 0, 255);
     }
     if (httpServer.hasArg("reinit")) {
+      // ATTENZIONE: apds.init() e' intermittente E termina con setMode(ALL,OFF),
+      // cioe' SPEGNE il sensore (ENABLE=0x00). Quindi va SEMPRE ri-abilitato dopo,
+      // altrimenti CDATA resta 0. apds_init_ok qui e' solo informativo.
       apds_init_ok = apds.init();
-      if (apds_init_ok) {
-        apds_light_ok = apds.enableLightSensor(false);
-        if (apds_light_ok) apds.setAmbientLightGain(AGAIN_64X);
+      // Riparti da false e ri-abilita SEMPRE: se ci affidassimo al valore
+      // precedente (gia' true dal boot) salteremmo la riaccensione lasciando
+      // il sensore spento dopo l'init().
+      apds_light_ok = false;
+      if (apds_init_ok && apds.enableLightSensor(false)) {
+        apds.setAmbientLightGain(AGAIN_64X);
+        apds_light_ok = true;
       }
-      // Sempre: prova il fallback raw se la lib non e' riuscita
+      // Fallback raw affidabile: scrive CONTROL (gain) ed ENABLE=0x03 direttamente
+      // e verifica con una lettura reale. E' questo il vero motore della riaccensione.
       if (!apds_light_ok) apds_light_ok = apdsForceLightOn();
+      // Dopo l'enable i dati di colore (CDATA) sono validi solo dopo >103ms di
+      // integrazione: aspetta, altrimenti la prima lettura della pagina e' 0.
+      delay(120);
     }
     if (httpServer.hasArg("save")) {
       uint8_t nmin = constrain(httpServer.arg("lmin").toInt(), 0, 255);
@@ -555,9 +566,12 @@ void setup() {
     h += "<label>Soglia ambient per il max: <input type=number name=amb min=1 max=37000 value=" + String(amb_max) + "></label>";
     h += "<input type=hidden name=save value=1><button type=submit>Salva</button></form>";
     h += "<p class=s>Stato attuale (la pagina rilegge il sensore ad ogni apertura)</p>";
-    h += "<p>luminosita: " + String(luminosita) + "/255<br>";
-    h += "ambient: " + String(ambient_light) + (read_ok ? "" : " (lettura FALLITA)") + "<br>";
-    h += "APDS init: " + String(apds_init_ok ? "ok" : "FAIL") + " - light sensor: " + String(apds_light_ok ? "ok" : "FAIL") + "</p>";
+    // L'indicatore di salute e' la PROVA REALE (la lettura I2C e' riuscita?), non
+    // apds_init_ok: init() della lib SparkFun e' intermittente e fuorviante.
+    h += "<p>Sensore: " + String(read_ok ? "<b style=color:#27c93f>OK</b>" : "<b style=color:#ff5f57>NON LEGGE</b>") + "<br>";
+    h += "luminosita: " + String(luminosita) + "/255<br>";
+    h += "ambient: " + String(ambient_light) + "</p>";
+    h += "<p class=s>diagnostica: init=" + String(apds_init_ok ? "ok" : "fail") + " (intermittente, innocuo) &middot; light=" + String(apds_light_ok ? "ok" : "fail") + "</p>";
     h += "<p><a class=back href=/lum?reinit=1>&#8635; Ri-inizializza sensore</a></p>";
     h += pageFoot();
     httpServer.send(200, "text/html", h);
