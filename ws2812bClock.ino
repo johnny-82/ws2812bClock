@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include "myFont.h"
 #include "meteo.h"
+#include "secrets.h"  // STASSID / STAPSK (non versionato, vedi secrets.h.example)
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266HTTPClient.h>
@@ -19,8 +20,7 @@
 Adafruit_PCF8574 pcf;
 
 #ifndef STASSID
-#define STASSID "WIFI_SSID_PLACEHOLDER"
-#define STAPSK "WIFI_PASS_PLACEHOLDER"
+#error "Manca secrets.h: copia secrets.h.example in secrets.h e inserisci le credenziali WiFi"
 #endif
 
 const char* host = "wificlock";
@@ -42,9 +42,6 @@ volatile bool pcfInputs = false;
 void ICACHE_RAM_ATTR pcfInputs_INT() {
   pcfInputs = true;
 }
-//OpenWeather API KEY
-//API_KEY_PLACEHOLDER
-
 //url meteo (Open-Meteo, gratuito senza API key):
 //http://api.open-meteo.com/v1/forecast?latitude=41.21&longitude=14.27&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_hours=7&timezone=auto
 ESP8266WebServer httpServer(80);
