@@ -398,6 +398,46 @@ void scaricaMeteo() {
   meteo_ultimoFetch = millis();
 }
 
+// CSS condiviso da tutte le pagine web. Tema chiaro/scuro automatico via
+// prefers-color-scheme (le variabili --* cambiano in base al SO/browser).
+// In PROGMEM per non occupare RAM.
+static const char PAGE_CSS[] PROGMEM =
+  ":root{--bg:#fafafa;--fg:#222;--card:#ececef;--accent:#0a84ff;--muted:#666;--bd:#ccc}"
+  "@media(prefers-color-scheme:dark){:root{--bg:#1b1b1f;--fg:#e8e8ea;--card:#2a2a30;--muted:#a0a0a8;--bd:#3a3a42}}"
+  "*{box-sizing:border-box}"
+  "body{font-family:system-ui,sans-serif;max-width:440px;margin:20px auto;padding:0 14px;background:var(--bg);color:var(--fg)}"
+  "h2{margin:.2em 0 .6em}"
+  "a.card{display:block;padding:14px;margin:9px 0;background:var(--card);border-radius:10px;text-decoration:none;color:var(--fg);font-size:1.1em}"
+  "a.card:active{background:var(--accent);color:#fff}"
+  "a.back{display:inline-block;margin:0 0 6px;color:var(--accent);text-decoration:none}"
+  "label{display:block;margin:10px 0 4px}"
+  "label.in{display:inline-block;margin:6px 12px 6px 0}"
+  "input,select{font-size:1em;padding:7px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--fg)}"
+  "input[type=number]{width:5em}input[type=checkbox]{width:auto;vertical-align:middle}"
+  "button{margin-top:16px;padding:9px 18px;font-size:1em;background:var(--accent);color:#fff;border:0;border-radius:8px}"
+  "p.s{color:var(--muted);font-size:.9em;margin:18px 0 4px}"
+  "pre{background:var(--card);padding:12px;border-radius:8px;overflow:auto;font-size:.95em;line-height:1.5}";
+
+// Restituisce l'intestazione HTML (doctype/head/style + apertura body, link Home
+// e titolo h2). Con home=true salta il link "Home" e usa il titolo come testata.
+String pageHead(const char* titolo, bool home = false) {
+  String h = F("<!doctype html><html><head><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width,initial-scale=1'><title>");
+  h += titolo;
+  h += F("</title><style>");
+  h += FPSTR(PAGE_CSS);
+  h += F("</style></head><body>");
+  if (!home) h += F("<a class=back href=/>&#8592; Home</a>");
+  h += F("<h2>");
+  h += titolo;
+  h += F("</h2>");
+  return h;
+}
+
+String pageFoot() {
+  return F("</body></html>");
+}
+
 void setup() {
   Serial.begin(115200);
 #ifdef BUZZER_PIN
@@ -473,15 +513,12 @@ void setup() {
   });
   // Home: link rapidi (comodo da telefono digitando solo l'IP).
   httpServer.on("/", []() {
-    String h = "<!doctype html><html><head><meta charset=utf-8>"
-               "<meta name=viewport content='width=device-width,initial-scale=1'><title>Wificlock</title>"
-               "<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
-               "a{display:block;padding:12px;margin:8px 0;background:#eee;border-radius:8px;"
-               "text-decoration:none;color:#222;font-size:1.1em}</style></head><body>";
-    h += "<h2>Wificlock</h2>";
-    h += "<a href=/sveglia>&#9200; Sveglia</a><a href=/status>&#128202; Stato</a>"
-         "<a href=/lum>&#128161; Luminosita</a><a href=/wifi>&#128246; WiFi setup</a>";
-    h += "</body></html>";
+    String h = pageHead("Wificlock", true);
+    h += F("<a class=card href=/sveglia>&#9200; Sveglia</a>"
+           "<a class=card href=/status>&#128202; Stato</a>"
+           "<a class=card href=/lum>&#128161; Luminosita</a>"
+           "<a class=card href=/wifi>&#128246; WiFi setup</a>");
+    h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
   // Pagina luminosita': form per min/max e soglia ambient, persistiti in EEPROM.
@@ -511,13 +548,8 @@ void setup() {
     }
     // Lettura "live" del sensore ad ogni GET, cosi' la pagina e' sempre fresca.
     bool read_ok = apds.readAmbientLight(ambient_light);
-    String h = "<!doctype html><html><head><meta charset=utf-8>"
-               "<meta name=viewport content='width=device-width,initial-scale=1'>"
-               "<title>Luminosita</title><style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
-               "label{display:block;margin:10px 0 4px}input[type=number]{width:5em}"
-               "button{margin-top:14px;padding:8px 16px;font-size:1em}"
-               "p.s{color:#555;font-size:.9em;margin:18px 0 4px}</style></head><body>";
-    h += "<h2>Luminosita</h2><form method=get action=/lum>";
+    String h = pageHead("Luminosita");
+    h += "<form method=get action=/lum>";
     h += "<label>Min (al buio, 0-255): <input type=number name=lmin min=0 max=255 value=" + String(lum_min) + "></label>";
     h += "<label>Max (a piena luce, 0-255): <input type=number name=lmax min=0 max=255 value=" + String(lum_max) + "></label>";
     h += "<label>Soglia ambient per il max: <input type=number name=amb min=1 max=37000 value=" + String(amb_max) + "></label>";
@@ -526,8 +558,8 @@ void setup() {
     h += "<p>luminosita: " + String(luminosita) + "/255<br>";
     h += "ambient: " + String(ambient_light) + (read_ok ? "" : " (lettura FALLITA)") + "<br>";
     h += "APDS init: " + String(apds_init_ok ? "ok" : "FAIL") + " - light sensor: " + String(apds_light_ok ? "ok" : "FAIL") + "</p>";
-    h += "<p><a href=/lum?reinit=1>Ri-inizializza sensore</a></p>";
-    h += "</body></html>";
+    h += "<p><a class=back href=/lum?reinit=1>&#8635; Ri-inizializza sensore</a></p>";
+    h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
   // /buzz?f=NN imposta la frequenza del tono (Hz) e suona un test.
@@ -603,24 +635,20 @@ void setup() {
         if (httpServer.hasArg(String("g") + i)) sv_giorni |= (1 << i);
       salvaSveglia();
     }
-    String h = "<!doctype html><html><head><meta charset=utf-8>"
-               "<meta name=viewport content='width=device-width,initial-scale=1'>"
-               "<title>Sveglia</title><style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
-               "label{display:inline-block;margin:6px 10px 6px 0}input[type=number]{width:3em}"
-               "button{margin-top:14px;padding:8px 16px;font-size:1em}</style></head><body>";
-    h += "<h2>Sveglia</h2><form method=get action=/sveglia>";
-    h += "<label><input type=checkbox name=on" + String(sv_attiva ? " checked" : "") + "> <b>Attiva</b></label><br><br>";
+    String h = pageHead("Sveglia");
+    h += "<form method=get action=/sveglia>";
+    h += "<label class=in><input type=checkbox name=on" + String(sv_attiva ? " checked" : "") + "> <b>Attiva</b></label><br><br>";
     h += "Ora: <input type=number name=ore min=0 max=23 value=" + String(sv_ore) + ">";
     h += " : <input type=number name=min min=0 max=59 value=" + String(sv_min) + "><br>";
     const char* gg[7] = { "Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom" };
     for (int i = 0; i < 7; i++) {
-      h += "<label><input type=checkbox name=g" + String(i);
+      h += "<label class=in><input type=checkbox name=g" + String(i);
       if (sv_giorni & (1 << i)) h += " checked";
       h += "> " + String(gg[i]) + "</label>";
     }
     h += "<input type=hidden name=save value=1><br><button type=submit>Salva</button></form>";
     h += "<p>Stato: " + String((sv_attiva && sv_giorni) ? "ATTIVA" : (!sv_attiva ? "spenta (off)" : "spenta (nessun giorno)")) + "</p>";
-    h += "</body></html>";
+    h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
   httpServer.on("/status", []() {
@@ -641,28 +669,32 @@ void setup() {
              meteo_slot[1].temp, meteo_slot[1].umidita, meteo_slot[1].icona,
              meteo_slot[2].temp, meteo_slot[2].umidita, meteo_slot[2].icona,
              (long)WiFi.RSSI(), luminosita, ambient_light);
-    httpServer.send(200, "text/plain", buf);
+    String h = pageHead("Stato");
+    h += "<pre>";
+    h += buf;
+    h += "</pre><p><a class=back href=/status>&#8635; Aggiorna</a></p>";
+    h += pageFoot();
+    httpServer.send(200, "text/html", h);
   });
   // Portale WiFi: form per inserire SSID/password della nuova rete.
   httpServer.on("/wifi", []() {
-    String h = "<!doctype html><html><head><meta charset=utf-8>"
-               "<meta name=viewport content='width=device-width,initial-scale=1'><title>WiFi Setup</title>"
-               "<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}"
-               "input{width:100%;padding:6px;margin:4px 0;box-sizing:border-box}button{padding:8px 16px}</style></head><body>";
-    h += "<h2>Configura WiFi</h2><form method=get action=/wifisave>";
-    h += "Rete (SSID):<br><input name=ssid list=reti value='" + String(wifi_ssid) + "'><datalist id=reti>";
+    String h = pageHead("Configura WiFi");
+    h += "<form method=get action=/wifisave>";
+    h += "<label>Rete (SSID):<br><input name=ssid list=reti style=width:100% value='" + String(wifi_ssid) + "'></label><datalist id=reti>";
     int n = WiFi.scanNetworks();
     for (int i = 0; i < n; i++) h += "<option value='" + WiFi.SSID(i) + "'>";
-    h += "</datalist>Password:<br><input name=pass type=password><br><br>";
+    h += "</datalist><label>Password:<br><input name=pass type=password style=width:100%></label><br>";
     h += "<button type=submit>Salva e riavvia</button></form>";
-    h += "<p>Reti trovate: " + String(n) + "</p></body></html>";
+    h += "<p class=s>Reti trovate: " + String(n) + "</p>";
+    h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
   httpServer.on("/wifisave", []() {
     salvaWifi(httpServer.arg("ssid").c_str(), httpServer.arg("pass").c_str());
-    httpServer.send(200, "text/html",
-                    "<html><body style='font-family:sans-serif'><h3>Salvato. Riavvio...</h3>"
-                    "<p>Ricollegati alla tua rete WiFi.</p></body></html>");
+    String h = pageHead("Salvato", true);
+    h += F("<p>Riavvio in corso&hellip;</p><p class=s>Ricollegati alla tua rete WiFi.</p>");
+    h += pageFoot();
+    httpServer.send(200, "text/html", h);
     delay(1500);
     ESP.restart();
   });
