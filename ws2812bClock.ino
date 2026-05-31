@@ -45,8 +45,8 @@ void ICACHE_RAM_ATTR pcfInputs_INT() {
 //OpenWeather API KEY
 //API_KEY_PLACEHOLDER
 
-//url
-//http://api.openweathermap.org/data/2.5/forecast?q=dragoni,Campania,it&appid=API_KEY_PLACEHOLDER&lang=it&cnt=6&units=metric
+//url meteo (Open-Meteo, gratuito senza API key):
+//http://api.open-meteo.com/v1/forecast?latitude=41.21&longitude=14.27&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_hours=7&timezone=auto
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 
@@ -200,23 +200,27 @@ void avviaPortale() {
   Serial.printf("Portale WiFi attivo: rete '%s' -> http://%s\n", AP_SSID, ip.toString().c_str());
 }
 
-// --- Meteo (OpenWeather) ---
-const char* meteo_apikey = "API_KEY_PLACEHOLDER";
-const char* meteo_localita = "dragoni,IT";
+// --- Meteo (Open-Meteo, gratuito e senza API key) ---
+// Coordinate di Dragoni (CE). Open-Meteo vuole lat/lon, non il nome localita'.
+#define METEO_LAT "41.21"
+#define METEO_LON "14.27"
 #define METEO_REFRESH 600000UL  // ricarica i dati al massimo ogni 10 minuti
-// Previsione a 3 slot da una sola chiamata /forecast (step di 3h):
-// 0 = piu' vicino ad ora, 1 = +3h, 2 = +6h.
+// Previsione a 3 slot da una sola chiamata: con forecast_hours l'array hourly
+// parte dall'ora corrente, quindi gli indici 0/3/6 sono ora / +3h / +6h.
 #define METEO_NSLOT 3
 struct MeteoSlot {
   float temp;
   int umidita;
-  char icona[4];  // codice icona OpenWeather (es. 01d, 04n)
+  int wmo;       // codice meteo WMO di Open-Meteo (0=sereno, 3=coperto, 61=pioggia...)
+  bool giorno;   // is_day: true=icona diurna, false=notturna (per sereno/variabile)
 };
 MeteoSlot meteo_slot[METEO_NSLOT] = {
-  { 0, 0, "01d" }, { 0, 0, "01d" }, { 0, 0, "01d" }
+  { 0, 0, 0, true }, { 0, 0, 0, true }, { 0, 0, 0, true }
 };
 bool meteo_ok = false;
 unsigned long meteo_ultimoFetch = 0;
+int meteo_http_code = 0;          // ultimo codice HTTP (per diagnostica /meteo)
+const char* meteo_last_err = "";  // ultimo errore di parsing/fetch (diagnostica)
 
 // --- Sincronizzazione tempo via Internet (NTP) ---
 // Fuso orario Italia con ora legale automatica (CET/CEST)
@@ -271,22 +275,51 @@ void aggiornaRTCdaNTP(bool attendi) {
                 tloc->tm_hour, tloc->tm_min, tloc->tm_sec);
 }
 
-// Mappa il codice icona OpenWeather (es. "10d") sull'icona 8x8 da mostrare.
-// Per sereno/variabile c'e' la variante giorno/notte (suffisso d/n), le altre
-// condizioni usano un'unica icona a sfondo nero.
-Icona8 iconaPer(const char* code) {
-  bool notte = (code[2] == 'n');
-  char a = code[0], b = code[1];
-  if (a == '0' && b == '1') return notte ? notte_sereno : giorno_sereno;     // sereno
-  if (a == '0' && b == '2') return notte ? notte_variabile : giorno_variabile;  // poco nuvoloso
-  if (a == '0' && b == '3') return nuvolo;                                    // nubi sparse
-  if (a == '0' && b == '4') return coperto;                                   // coperto
-  if (a == '0' && b == '9') return pioggia;                                   // pioggia/rovesci
-  if (a == '1' && b == '0') return pioggia;                                   // pioggia
-  if (a == '1' && b == '1') return temporale;                                 // temporale
-  if (a == '1' && b == '3') return neve;                                      // neve
-  if (a == '5') return nebbia;                                                // nebbia/foschia
-  return nuvolo;
+// Mappa il codice meteo WMO di Open-Meteo sull'icona 8x8 da mostrare.
+// Tabella WMO: 0 sereno, 1-2 poco nuvoloso, 3 coperto, 45/48 nebbia,
+// 51-67 pioviggine/pioggia, 71-77 neve, 80-82 rovesci, 85-86 rovesci di neve,
+// 95-99 temporale. Per sereno/variabile c'e' la variante giorno/notte (is_day).
+Icona8 iconaPer(int wmo, bool giorno) {
+  switch (wmo) {
+    case 0:  return giorno ? giorno_sereno : notte_sereno;        // cielo sereno
+    case 1:
+    case 2:  return giorno ? giorno_variabile : notte_variabile;  // poco nuvoloso
+    case 3:  return coperto;                                      // coperto
+    case 45:
+    case 48: return nebbia;                                       // nebbia
+    case 71:
+    case 73:
+    case 75:
+    case 77:
+    case 85:
+    case 86: return neve;                                         // neve
+    case 95:
+    case 96:
+    case 99: return temporale;                                    // temporale
+    default: return pioggia;  // 51-67 pioviggine/pioggia, 80-82 rovesci
+  }
+}
+
+// Descrizione breve del codice WMO (per la pagina /status, solo diagnostica).
+const char* meteoDesc(int wmo) {
+  switch (wmo) {
+    case 0:  return "sereno";
+    case 1:  return "quasi sereno";
+    case 2:  return "poco nuvoloso";
+    case 3:  return "coperto";
+    case 45:
+    case 48: return "nebbia";
+    case 71:
+    case 73:
+    case 75:
+    case 77:
+    case 85:
+    case 86: return "neve";
+    case 95:
+    case 96:
+    case 99: return "temporale";
+    default: return "pioggia";
+  }
 }
 
 // Imposta un pixel applicando la luminosita', con clipping fuori matrice.
@@ -326,7 +359,7 @@ void preparaScenaMeteo() {
   for (int i = 0; i < METEO_NSLOT; i++) {
     if (meteo_ok) sprintf(meteo_txt[i], "%d*", (int)lround(meteo_slot[i].temp));
     else sprintf(meteo_txt[i], "--*");
-    meteo_ico[i] = iconaPer(meteo_slot[i].icona);
+    meteo_ico[i] = iconaPer(meteo_slot[i].wmo, meteo_slot[i].giorno);
     meteo_blkX[i] = x;
     x += 8 + METEO_GAP_ICO_TXT + larghezza(meteo_txt[i], FONT_5x3);
     if (i < METEO_NSLOT - 1) x += METEO_SEP_W;
@@ -351,48 +384,58 @@ void scaricaMeteo() {
   if (WiFi.status() != WL_CONNECTED) return;
   WiFiClient client;
   HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/forecast?q=";
-  url += meteo_localita;
-  url += "&appid=";
-  url += meteo_apikey;
-  url += "&lang=it&units=metric&cnt=";
-  url += METEO_NSLOT;
+  // forecast_hours=7: l'array hourly parte dall'ora corrente, cosi' gli indici
+  // 0/3/6 danno ora / +3h / +6h. Open-Meteo accetta HTTP semplice (no TLS).
+  String url = "http://api.open-meteo.com/v1/forecast?latitude=" METEO_LAT
+               "&longitude=" METEO_LON
+               "&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day"
+               "&forecast_hours=7&timezone=auto";
   http.begin(client, url);
   int code = http.GET();
+  meteo_http_code = code;
+  meteo_last_err = "";
   Serial.print("Meteo HTTP ");
   Serial.println(code);
   if (code == HTTP_CODE_OK) {
-    // Filtro: tieni solo i campi utili di ogni elemento della lista, cosi' il
-    // documento resta piccolo in RAM (importante su ESP8266).
-    JsonDocument filter;
-    filter["list"][0]["main"]["temp"] = true;
-    filter["list"][0]["main"]["humidity"] = true;
-    filter["list"][0]["weather"][0]["icon"] = true;
+    // IMPORTANTE: Open-Meteo risponde in Transfer-Encoding chunked. getStream()
+    // espone i marker di chunk grezzi (es. "260\r\n{...}") e il parser fallisce
+    // con InvalidInput; getString() invece DECODIFICA i chunk. Il payload e'
+    // piccolo (~600 byte con forecast_hours=7), quindi niente filtro: si parsa
+    // l'intero documento (gli array sono PARALLELI: hourly.temperature_2m[], ...).
+    String payload = http.getString();
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+    DeserializationError err = deserializeJson(doc, payload);
     if (!err) {
-      JsonArray lista = doc["list"].as<JsonArray>();
+      JsonObject h = doc["hourly"];
+      JsonArray temp = h["temperature_2m"];
+      JsonArray hum = h["relative_humidity_2m"];
+      JsonArray wmo = h["weather_code"];
+      JsonArray isday = h["is_day"];
+      const int idx[METEO_NSLOT] = { 0, 3, 6 };  // ora, +3h, +6h
       int n = 0;
-      for (JsonObject it : lista) {
-        if (n >= METEO_NSLOT) break;
-        meteo_slot[n].temp = it["main"]["temp"] | 0.0f;
-        meteo_slot[n].umidita = it["main"]["humidity"] | 0;
-        const char* ic = it["weather"][0]["icon"] | "01d";
-        strncpy(meteo_slot[n].icona, ic, 3);
-        meteo_slot[n].icona[3] = 0;
+      for (int i = 0; i < METEO_NSLOT; i++) {
+        int k = idx[i];
+        if (k >= (int)temp.size()) break;
+        meteo_slot[i].temp = temp[k] | 0.0f;
+        meteo_slot[i].umidita = hum[k] | 0;
+        meteo_slot[i].wmo = wmo[k] | 0;
+        meteo_slot[i].giorno = (isday[k] | 1) != 0;
         n++;
       }
       if (n > 0) {
         meteo_ok = true;
-        Serial.printf("Meteo: ora %.1f/%s, +3h %.1f/%s, +6h %.1f/%s\n",
-                      meteo_slot[0].temp, meteo_slot[0].icona,
-                      meteo_slot[1].temp, meteo_slot[1].icona,
-                      meteo_slot[2].temp, meteo_slot[2].icona);
+        Serial.printf("Meteo: ora %.1f/wmo%d, +3h %.1f/wmo%d, +6h %.1f/wmo%d\n",
+                      meteo_slot[0].temp, meteo_slot[0].wmo,
+                      meteo_slot[1].temp, meteo_slot[1].wmo,
+                      meteo_slot[2].temp, meteo_slot[2].wmo);
       }
     } else {
+      meteo_last_err = err.c_str();
       Serial.print("Errore parsing JSON meteo: ");
       Serial.println(err.c_str());
     }
+  } else {
+    meteo_last_err = "HTTP != 200";
   }
   http.end();
   meteo_ultimoFetch = millis();
@@ -665,6 +708,23 @@ void setup() {
     h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
+  // Forza un refresh meteo immediato e mostra l'esito (comodo per debug e per
+  // non dover aspettare il refresh automatico o la pagina meteo sui LED).
+  httpServer.on("/meteo", []() {
+    scaricaMeteo();
+    char buf[300];
+    snprintf(buf, sizeof(buf),
+             "meteo_ok: %s (http %d %s)\n"
+             "ora:  %.1f C %d%% %s%s\n"
+             "+3h:  %.1f C %d%% %s\n"
+             "+6h:  %.1f C %d%% %s\n",
+             meteo_ok ? "si" : "no", meteo_http_code, meteo_last_err,
+             meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
+             meteo_slot[0].giorno ? "" : " (notte)",
+             meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
+             meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo));
+    httpServer.send(200, "text/plain", buf);
+  });
   httpServer.on("/status", []() {
     time_t n = now();
     char buf[320];
@@ -679,9 +739,9 @@ void setup() {
              "ambient: %d\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
              meteo_ok ? "si" : "no",
-             meteo_slot[0].temp, meteo_slot[0].umidita, meteo_slot[0].icona,
-             meteo_slot[1].temp, meteo_slot[1].umidita, meteo_slot[1].icona,
-             meteo_slot[2].temp, meteo_slot[2].umidita, meteo_slot[2].icona,
+             meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
+             meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
+             meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo),
              (long)WiFi.RSSI(), luminosita, ambient_light);
     String h = pageHead("Stato");
     h += "<pre>";
