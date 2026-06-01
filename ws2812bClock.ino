@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include "myFont.h"
 #include "meteo.h"
+#include "splash.h"
 #include "secrets.h"  // STASSID / STAPSK (non versionato, vedi secrets.h.example)
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
@@ -333,6 +334,37 @@ void disegnaScroll(Icona8 img, int startColonna) {
       setPx(r, startColonna + c, img[r][c]);
 }
 
+// Splash-screen full-display 32x8 (vedi splash.h), mostrato una volta al boot.
+void disegnaSplash() {
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 32; c++)
+      setPx(r, c, splash[r][c]);
+  strip.Show();
+}
+
+// Ridisegna lo splash scalandone l'intensita' (scala 0..255), per il fade-out.
+void disegnaSplashDim(uint8_t scala) {
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 32; c++) {
+      RgbColor px = splash[r][c];
+      setPx(r, c, RgbColor((px.R * scala) / 255, (px.G * scala) / 255, (px.B * scala) / 255));
+    }
+  strip.Show();
+}
+
+// Transizione splash -> ora: un paio di blink rapidi seguiti da un fade-out.
+void animazioneSplash() {
+  for (int i = 0; i < 2; i++) {
+    strip.ClearTo(RgbColor(0)); strip.Show(); delay(110);
+    disegnaSplash();                           delay(110);
+  }
+  for (int s = 255; s >= 0; s -= 15) {
+    disegnaSplashDim((uint8_t)s);
+    delay(28);
+  }
+  strip.ClearTo(RgbColor(0)); strip.Show();
+}
+
 // Freccetta ">" (chevron 3x5) usata come separatore tra i blocchi della scena.
 void disegnaFreccia(int col, RgbColor c) {
   setPx(2, col, c);
@@ -544,8 +576,10 @@ void setup() {
   // LED pronti subito: servono anche per mostrare le istruzioni del portale WiFi
   strip.Begin();
   regolaLuminosita();
-  strip.ClearTo(RgbColor(0));
-  strip.Show();
+  // Splash-screen di benvenuto: resta acceso per tutto il resto del setup
+  // (connessione WiFi, NTP, meteo) e viene tolto solo dall'animazione finale,
+  // cosi' non c'e' piu' lo schermo nero in attesa dell'ora.
+  disegnaSplash();
 
   httpUpdater.setup(&httpServer, update_path);
   httpServer.on("/version", []() {
@@ -788,8 +822,11 @@ void setup() {
     scaricaMeteo();
     MDNS.begin(host);
     MDNS.addService("http", "tcp", 80);
+    // Ora e' tutto pronto: chiudi lo splash con il fade-blink e passa all'orario.
+    animazioneSplash();
   } else {
     Serial.println("WiFi non connesso -> portale di configurazione");
+    strip.ClearTo(RgbColor(0)); strip.Show();  // togli lo splash prima del portale
     avviaPortale();
   }
   Serial.println("per modificare data e ora digita 'dt=anno,mese,giorno,ora,minuti,secondi'");
