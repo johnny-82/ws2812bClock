@@ -1,14 +1,7 @@
 #ifndef _METEO_H_
 #define _METEO_H_
 #include <NeoPixelBus.h>
-#define azr RgbColor(0,0x7f,0xff)
-#define bls RgbColor(0,0,100)
-#define ylw RgbColor(255,150,80)
-#define wht RgbColor(200,200,255)
-#define gry RgbColor(110,110,130)  // nuvola
-#define rai RgbColor(40,110,255)   // pioggia
-#define sno RgbColor(210,210,255)  // neve
-#define blk RgbColor(0,0,0)        // sfondo trasparente (nero)
+#include "palette.h"   // palette di progetto condivisa (azr/ylw/blk/...)
 
 // Puntatore a una icona 8x8 (come accettato da disegna()/disegnaScroll()).
 typedef RgbColor (*Icona8)[8];

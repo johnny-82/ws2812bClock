@@ -184,6 +184,12 @@
         <button id="addColor">+ Colore</button>
         <button id="loadMeteo">Preset meteo.h</button>
       </div>
+      <div class="row">
+        <button id="loadPal" title="Carica una palette da un file .h (palette.h) e applicala">Carica palette…</button>
+        <input id="palPick" type="file" accept=".h,.hpp,.txt,text/plain" style="display:none">
+        <button id="savePal" title="Salva la palette corrente in un file palette.h riutilizzabile">Salva palette ⤓</button>
+      </div>
+      <p class="hint">La palette è un file <code>palette.h</code> di progetto: caricala qui per riusare gli stessi colori su tutte le icone/immagini.</p>
     </div>
 
     <div id="rgbBox" style="display:none">
@@ -256,6 +262,7 @@ const PRESET_METEO = [
   { name:'gry', hex:'#6e6e82' },
   { name:'rai', hex:'#286eff' },
   { name:'sno', hex:'#d2d2ff' },
+  { name:'cyn', hex:'#003c78' },
 ];
 
 // ---- Util ----
@@ -593,10 +600,66 @@ function removeColor(i){
 }
 $('addColor').addEventListener('click', ()=>{ doc.palette.push({name:'c'+doc.palette.length,hex:'#ffffff'});
   doc.selIdx=doc.palette.length-1; renderPalette(); save(); });
+// Applica una palette (array {name,hex}) sostituendo quella corrente: forza la
+// modalità indicizzata e ri-mappa gli indici fuori range sullo sfondo.
+function applyPalette(pal, bgIdx){
+  if(doc.mode!=='indexed') setMode('indexed');
+  doc.palette = pal.map(p=>({...p}));
+  doc.bgIdx = clamp(bgIdx|0, 0, doc.palette.length-1);
+  doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(v=> v<doc.palette.length?v:doc.bgIdx)));
+  doc.selIdx=Math.min(doc.selIdx, doc.palette.length-1);
+  renderPalette(); redraw(); renderIconList(); save();
+}
+// Estrae solo la palette (#define ... RgbColor(...)) da un testo .h; lo sfondo è
+// blk (o #000000), come nel parser completo.
+function parsePalette(text){
+  const palette=[], re=/#define\s+(\w+)\s+RgbColor\s*\(([^)]*)\)/g; let m;
+  while((m=re.exec(text))){ const n=m[2].split(',').map(s=>Number(s.trim())); palette.push({name:m[1], hex:rgbToHex(n[0]||0,n[1]||0,n[2]||0)}); }
+  if(!palette.length) throw new Error('Nessun #define ... RgbColor(...) trovato nel file.');
+  let bg = palette.findIndex(p=>p.name==='blk');
+  if(bg<0) bg = palette.findIndex(p=>p.hex.toLowerCase()==='#000000');
+  if(bg<0) bg = 0;
+  return { palette, bgIdx:bg };
+}
+function applyPaletteText(text){
+  const { palette, bgIdx } = parsePalette(text);
+  if(kind==='font') alert('La palette riguarda solo le Icone (in Font i pixel sono 0/1): caricata ma non usata qui.');
+  applyPalette(palette, bgIdx);
+}
+// Genera un file palette.h riutilizzabile (solo i #define della palette corrente).
+function genPaletteHeader(){
+  const g=guardOf('palette.h','palette.h');
+  let out=`#ifndef ${g}\n#define ${g}\n#include <NeoPixelBus.h>\n\n`;
+  out+=`// Palette di progetto condivisa. Carica/Salva con tools/pixel-editor.html.\n`;
+  out+=doc.palette.map(p=>{ const[r,gg,b]=hexToRgb(p.hex); return `#define ${p.name} RgbColor(${r},${gg},${b})`; }).join('\n');
+  out+=`\n\n#endif\n`;
+  return out;
+}
+
 $('loadMeteo').addEventListener('click', ()=>{ if(!confirm('Sostituire la palette con il preset meteo.h?')) return;
-  doc.palette=PRESET_METEO.map(p=>({...p})); doc.bgIdx=0;
-  doc.icons.forEach(ic=>ic.grid=ic.grid.map(r=>r.map(v=> v<doc.palette.length?v:0)));
-  doc.selIdx=Math.min(doc.selIdx,doc.palette.length-1); renderPalette(); redraw(); renderIconList(); save(); });
+  applyPalette(PRESET_METEO, 0); });
+
+let paletteHandle=null;   // handle File System Access dedicato al file palette.h
+$('loadPal').addEventListener('click', async ()=>{
+  if(supportsFS){ try{
+      const [h]=await window.showOpenFilePicker({ types:FS_TYPES });
+      paletteHandle=h; applyPaletteText(await (await h.getFile()).text());
+    }catch(err){ if(err.name!=='AbortError') alert('Caricamento palette fallito: '+err.message); }
+  } else $('palPick').click();
+});
+$('palPick').addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=()=>{ try{ applyPaletteText(rd.result); }
+    catch(err){ alert('Caricamento palette fallito: '+err.message); } }; rd.readAsText(f); e.target.value=''; });
+$('savePal').addEventListener('click', async ()=>{
+  const txt=genPaletteHeader();
+  if(supportsFS){ try{
+      const h = paletteHandle || await window.showSaveFilePicker({ suggestedName:'palette.h', types:FS_TYPES });
+      paletteHandle=h; const w=await h.createWritable(); await w.write(txt); await w.close();
+      const b=$('savePal'), t=b.textContent; b.textContent='✓ '+h.name; setTimeout(()=>{ b.textContent=t; }, 1600);
+    }catch(err){ if(err.name!=='AbortError') alert('Salvataggio palette fallito: '+err.message); }
+  } else { const a=document.createElement('a'); a.download='palette.h';
+    a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); a.click(); URL.revokeObjectURL(a.href); }
+});
 
 $('rgbPick').addEventListener('input', e=>{ doc.rgbPick=e.target.value; save(); });
 $('rgbBg').addEventListener('input', e=>{ doc.rgbBg=e.target.value; if(doc.mode==='rgb'){redraw();renderIconList();} save(); });
@@ -661,7 +724,9 @@ function genIcon(ic){
 function genIconHeader(){
   let out = (doc.preamble||'').replace(/\s+$/,'');
   if(out) out+='\n\n';
-  if(doc.mode==='indexed' && doc.palette.length){
+  // Se il preambolo include già palette.h, i colori vivono lì: non duplicare i #define.
+  const paletteEsterna = /#include\s*"palette\.h"/.test(doc.preamble||'');
+  if(doc.mode==='indexed' && doc.palette.length && !paletteEsterna){
     out += doc.palette.map(p=>{ const[r,g,b]=hexToRgb(p.hex); return `#define ${p.name} RgbColor(${r},${g},${b})`; }).join('\n')+'\n\n';
   }
   out += doc.icons.map(genIcon).join('\n');
