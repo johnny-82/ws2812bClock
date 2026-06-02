@@ -199,9 +199,16 @@ void avviaPortale() {
 }
 
 // --- Meteo (Open-Meteo, gratuito e senza API key) ---
-// Coordinate di Dragoni (CE). Open-Meteo vuole lat/lon, non il nome localita'.
-#define METEO_LAT "41.21"
-#define METEO_LON "14.27"
+// Coordinate di default (Dragoni CE), sovrascrivibili da /coord (geocoding) e
+// persistite in EEPROM. Open-Meteo vuole lat/lon, non il nome localita'.
+#define METEO_LAT_DEF 41.21
+#define METEO_LON_DEF 14.27
+#define METEO_NOME_DEF "Dragoni"
+#define COORD_EEPROM_ADDR 120   // dopo WIFI (16..~114); EEPROM.begin(512)
+#define COORD_MAGIC 0x3D
+double meteo_lat = METEO_LAT_DEF;
+double meteo_lon = METEO_LON_DEF;
+char meteo_nome[24] = METEO_NOME_DEF;
 #define METEO_REFRESH 600000UL  // ricarica i dati al massimo ogni 10 minuti
 // Previsione a 3 slot da una sola chiamata: con forecast_hours l'array hourly
 // parte dall'ora corrente, quindi gli indici 0/3/6 sono ora / +3h / +6h.
@@ -219,6 +226,37 @@ bool meteo_ok = false;
 unsigned long meteo_ultimoFetch = 0;
 int meteo_http_code = 0;          // ultimo codice HTTP (per diagnostica /meteo)
 const char* meteo_last_err = "";  // ultimo errore di parsing/fetch (diagnostica)
+
+// Qualita' dell'aria (European AQI da Open-Meteo air-quality), appesa alla scena meteo.
+int aqi = -1;
+bool aqi_ok = false;
+
+// Messaggio scorrevole one-shot (impostato da /msg, non persistito in EEPROM).
+#define MSG_REPEAT_DEF 3
+String msgText = "";
+int msgRepeatLeft = 0;
+
+// Coordinate persistite in EEPROM (stesso modello di caricaSveglia/caricaWifi).
+struct CoordCfg { uint8_t magic; double lat, lon; char nome[24]; };
+void caricaCoord() {
+  CoordCfg c;
+  EEPROM.get(COORD_EEPROM_ADDR, c);
+  if (c.magic == COORD_MAGIC && c.lat >= -90 && c.lat <= 90 && c.lon >= -180 && c.lon <= 180) {
+    c.nome[sizeof(c.nome) - 1] = 0;
+    meteo_lat = c.lat; meteo_lon = c.lon;
+    strncpy(meteo_nome, c.nome, sizeof(meteo_nome)); meteo_nome[sizeof(meteo_nome) - 1] = 0;
+    Serial.printf("Coord da EEPROM: %s (%.4f, %.4f)\n", meteo_nome, meteo_lat, meteo_lon);
+  } else {
+    Serial.printf("Coord: nessuna config valida, uso default %s\n", meteo_nome);
+  }
+}
+void salvaCoord() {
+  CoordCfg c = { COORD_MAGIC, meteo_lat, meteo_lon };
+  strncpy(c.nome, meteo_nome, sizeof(c.nome)); c.nome[sizeof(c.nome) - 1] = 0;
+  EEPROM.put(COORD_EEPROM_ADDR, c);
+  EEPROM.commit();
+  Serial.printf("Coord salvate: %s (%.4f, %.4f)\n", meteo_nome, meteo_lat, meteo_lon);
+}
 
 // --- Sincronizzazione tempo via Internet (NTP) ---
 // Fuso orario Italia con ora legale automatica (CET/CEST)
@@ -381,6 +419,30 @@ char meteo_txt[METEO_NSLOT][8];
 Icona8 meteo_ico[METEO_NSLOT];
 int meteo_blkX[METEO_NSLOT];  // colonna iniziale (relativa) dell'icona di ogni blocco
 int meteo_sceneW = 0;         // larghezza totale della scena
+int aq_blkX = -1;             // colonna iniziale del blocco AQI (-1 = assente)
+String aq_txt;                // testo del blocco AQI ("AQ" + indice)
+
+// Colore (0xRRGGBB) per categoria European AQI: piu' alto = aria peggiore.
+unsigned int coloreAQI(int v) {
+  if (v < 0)    return 0x787878;  // sconosciuto (grigio)
+  if (v <= 20)  return 0x00C800;  // buona (verde)
+  if (v <= 40)  return 0x96C800;  // discreta (verde-giallo)
+  if (v <= 60)  return 0xDCC800;  // moderata (giallo)
+  if (v <= 80)  return 0xFF7800;  // scarsa (arancio)
+  if (v <= 100) return 0xFF0000;  // molto scarsa (rosso)
+  return 0xB40078;                // estrema (viola)
+}
+
+// Categoria testuale per l'AQI europeo (per le pagine diagnostiche).
+const char* categoriaAQI(int v) {
+  if (v < 0)    return "n/d";
+  if (v <= 20)  return "buona";
+  if (v <= 40)  return "discreta";
+  if (v <= 60)  return "moderata";
+  if (v <= 80)  return "scarsa";
+  if (v <= 100) return "molto scarsa";
+  return "estrema";
+}
 
 // Prepara testi, icone e posizioni dei blocchi in base ai dati correnti.
 void preparaScenaMeteo() {
@@ -392,6 +454,15 @@ void preparaScenaMeteo() {
     meteo_blkX[i] = x;
     x += 8 + METEO_GAP_ICO_TXT + larghezza(meteo_txt[i], FONT_5x3);
     if (i < METEO_NSLOT - 1) x += METEO_SEP_W;
+  }
+  // Blocco qualita' dell'aria appeso in coda (solo se disponibile).
+  if (aqi_ok) {
+    x += METEO_SEP_W;
+    aq_blkX = x;
+    aq_txt = "AQ" + String(aqi);
+    x += larghezza(aq_txt, FONT_5x3);
+  } else {
+    aq_blkX = -1;
   }
   meteo_sceneW = x;
 }
@@ -405,6 +476,11 @@ void disegnaScenaMeteo(int off) {
     if (i < METEO_NSLOT - 1)
       disegnaFreccia(off + meteo_blkX[i + 1] - METEO_SEP_W + 1, RgbColor(120, 120, 255));
   }
+  // Blocco AQI in coda: freccia separatore + "AQ<indice>" colorato per categoria.
+  if (aqi_ok && aq_blkX >= 0) {
+    disegnaFreccia(off + aq_blkX - METEO_SEP_W + 1, RgbColor(120, 120, 255));
+    scrivi(aq_txt, FONT_5x3, 2, off + aq_blkX, coloreAQI(aqi));
+  }
 }
 
 // Scarica la previsione da OpenWeather (una sola chiamata /forecast, step di 3h)
@@ -415,10 +491,10 @@ void scaricaMeteo() {
   HTTPClient http;
   // forecast_hours=7: l'array hourly parte dall'ora corrente, cosi' gli indici
   // 0/3/6 danno ora / +3h / +6h. Open-Meteo accetta HTTP semplice (no TLS).
-  String url = "http://api.open-meteo.com/v1/forecast?latitude=" METEO_LAT
-               "&longitude=" METEO_LON
-               "&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day"
-               "&forecast_hours=7&timezone=auto";
+  String url = "http://api.open-meteo.com/v1/forecast?latitude=" + String(meteo_lat, 4)
+               + "&longitude=" + String(meteo_lon, 4)
+               + "&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day"
+               + "&forecast_hours=7&timezone=auto";
   http.begin(client, url);
   int code = http.GET();
   meteo_http_code = code;
@@ -467,7 +543,76 @@ void scaricaMeteo() {
     meteo_last_err = "HTTP != 200";
   }
   http.end();
+  scaricaAQ();   // aggiorna l'AQI insieme al meteo (stesso refresh)
   meteo_ultimoFetch = millis();
+}
+
+// Scarica l'AQI europeo corrente da Open-Meteo air-quality (valore istantaneo).
+void scaricaAQ() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  WiFiClient client;
+  HTTPClient http;
+  String url = "http://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + String(meteo_lat, 4)
+               + "&longitude=" + String(meteo_lon, 4) + "&current=european_aqi";
+  http.begin(client, url);
+  int code = http.GET();
+  Serial.print("AQ HTTP ");
+  Serial.println(code);
+  if (code == HTTP_CODE_OK) {
+    String payload = http.getString();   // chunked: getString() decodifica (come meteo)
+    JsonDocument doc;
+    if (!deserializeJson(doc, payload)) {
+      JsonVariant v = doc["current"]["european_aqi"];
+      if (!v.isNull()) { aqi = v.as<int>(); aqi_ok = true; }
+      else aqi_ok = false;
+    }
+  }
+  http.end();
+}
+
+// Percent-encoding minimale per i nomi citta' (gestisce spazi e accenti).
+String urlEncode(const String& s) {
+  String out;
+  char buf[4];
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (isalnum((unsigned char)c)) out += c;
+    else { sprintf(buf, "%%%02X", (uint8_t)c); out += buf; }
+  }
+  return out;
+}
+
+// Cerca una citta' col geocoding di Open-Meteo, aggiorna+salva le coordinate e
+// rinfresca subito il meteo. Ritorna true se la citta' e' stata trovata.
+bool cercaCitta(const String& nome) {
+  if (WiFi.status() != WL_CONNECTED || nome.length() == 0) return false;
+  WiFiClient client;
+  HTTPClient http;
+  String url = "http://geocoding-api.open-meteo.com/v1/search?name=" + urlEncode(nome)
+               + "&count=1&language=it&format=json";
+  http.begin(client, url);
+  int code = http.GET();
+  Serial.print("Geocoding HTTP ");
+  Serial.println(code);
+  bool ok = false;
+  if (code == HTTP_CODE_OK) {
+    String payload = http.getString();
+    JsonDocument doc;
+    if (!deserializeJson(doc, payload)) {
+      JsonArray res = doc["results"];
+      if (!res.isNull() && res.size() > 0) {
+        meteo_lat = res[0]["latitude"] | meteo_lat;
+        meteo_lon = res[0]["longitude"] | meteo_lon;
+        const char* nm = res[0]["name"] | nome.c_str();
+        strncpy(meteo_nome, nm, sizeof(meteo_nome)); meteo_nome[sizeof(meteo_nome) - 1] = 0;
+        salvaCoord();
+        scaricaMeteo();
+        ok = true;
+      }
+    }
+  }
+  http.end();
+  return ok;
 }
 
 // CSS condiviso da tutte le pagine web. Tema chiaro/scuro automatico via
@@ -520,6 +665,7 @@ void setup() {
   caricaSveglia();
   caricaLum();
   caricaWifi();
+  caricaCoord();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   // L'APDS-9960 fa clock stretching aggressivo: clock basso + limite alto
@@ -589,6 +735,8 @@ void setup() {
   httpServer.on("/", []() {
     String h = pageHead("Wificlock", true);
     h += F("<a class=card href=/sveglia>&#9200; Sveglia</a>"
+           "<a class=card href=/msg>&#128172; Messaggio</a>"
+           "<a class=card href=/coord>&#127757; Localita meteo</a>"
            "<a class=card href=/status>&#128202; Stato</a>"
            "<a class=card href=/lum>&#128161; Luminosita</a>"
            "<a class=card href=/wifi>&#128246; WiFi setup</a>");
@@ -739,17 +887,54 @@ void setup() {
     h += pageFoot();
     httpServer.send(200, "text/html", h);
   });
+  // Localita' meteo: cerca una citta' col geocoding Open-Meteo e salva lat/lon.
+  httpServer.on("/coord", []() {
+    String esito;
+    if (httpServer.hasArg("citta")) {
+      String q = httpServer.arg("citta"); q.trim();
+      esito = cercaCitta(q) ? ("Trovata: " + String(meteo_nome)) : "Citta' non trovata o errore di rete.";
+    }
+    String h = pageHead("Localita meteo");
+    h += "<form method=get action=/coord>";
+    h += "Citta: <input name=citta style=width:60% value='" + String(meteo_nome) + "'> ";
+    h += "<button type=submit>Cerca e salva</button></form>";
+    if (esito.length()) h += "<p>" + esito + "</p>";
+    h += "<p class=s>Coordinate attuali: " + String(meteo_lat, 4) + ", " + String(meteo_lon, 4) + "</p>";
+    h += pageFoot();
+    httpServer.send(200, "text/html", h);
+  });
+  // Messaggio scorrevole one-shot: il testo scorre subito N volte sul display.
+  httpServer.on("/msg", []() {
+    if (httpServer.hasArg("testo")) {
+      msgText = httpServer.arg("testo");
+      if (msgText.length() > 64) msgText = msgText.substring(0, 64);
+      int rip = httpServer.hasArg("rip") ? httpServer.arg("rip").toInt() : MSG_REPEAT_DEF;
+      msgRepeatLeft = constrain(rip, 1, 20);
+    }
+    String h = pageHead("Messaggio");
+    h += "<form method=get action=/msg>";
+    h += "Testo: <input name=testo maxlength=64 style=width:60% value='" + msgText + "'><br>";
+    h += "Ripetizioni: <input type=number name=rip min=1 max=20 value=" + String(MSG_REPEAT_DEF) + "><br><br>";
+    h += "<button type=submit>Mostra sul display</button></form>";
+    h += "<p class=s>Il messaggio scorre subito e poi torna all'orologio.</p>";
+    h += pageFoot();
+    httpServer.send(200, "text/html", h);
+  });
   // Forza un refresh meteo immediato e mostra l'esito (comodo per debug e per
   // non dover aspettare il refresh automatico o la pagina meteo sui LED).
   httpServer.on("/meteo", []() {
     scaricaMeteo();
-    char buf[300];
+    char buf[400];
     snprintf(buf, sizeof(buf),
+             "loc:  %s (%.4f, %.4f)\n"
              "meteo_ok: %s (http %d %s)\n"
+             "aria: AQI %d (%s)\n"
              "ora:  %.1f C %d%% %s%s\n"
              "+3h:  %.1f C %d%% %s\n"
              "+6h:  %.1f C %d%% %s\n",
+             meteo_nome, meteo_lat, meteo_lon,
              meteo_ok ? "si" : "no", meteo_http_code, meteo_last_err,
+             aqi_ok ? aqi : -1, categoriaAQI(aqi_ok ? aqi : -1),
              meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
              meteo_slot[0].giorno ? "" : " (notte)",
              meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
@@ -758,10 +943,12 @@ void setup() {
   });
   httpServer.on("/status", []() {
     time_t n = now();
-    char buf[320];
+    char buf[420];
     snprintf(buf, sizeof(buf),
              "ora: %02d/%02d/%04d %02d:%02d:%02d\n"
+             "loc: %s (%.4f, %.4f)\n"
              "meteo_ok: %s\n"
+             "aria: AQI %d (%s)\n"
              "ora:  %.1f C %d%% %s\n"
              "+3h:  %.1f C %d%% %s\n"
              "+6h:  %.1f C %d%% %s\n"
@@ -769,7 +956,9 @@ void setup() {
              "luminosita: %d/255\n"
              "ambient: %d\n",
              day(n), month(n), year(n), hour(n), minute(n), second(n),
+             meteo_nome, meteo_lat, meteo_lon,
              meteo_ok ? "si" : "no",
+             aqi_ok ? aqi : -1, categoriaAQI(aqi_ok ? aqi : -1),
              meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
              meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
              meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo),
@@ -847,6 +1036,9 @@ void setup() {
 #define PAGINA_SVEGLIA 4
 #define PAGINA_CONFIG 5
 #define PAGINA_FINE 6
+// Pagina speciale FUORI dal range navigabile SU/GIU: si attiva solo dal flag
+// one-shot del messaggio (msgRepeatLeft>0) e al termine torna all'orario.
+#define PAGINA_MSG 7
 // Ultima pagina navigabile con SU/GIU: Orario, Data, Meteo, Sveglia, Config.
 #define PAGINA_ULTIMA PAGINA_CONFIG
 #define SV_NCAMPI 10  // campi modifica: 0=on/off,1=ore,2=min,3..9=giorni Lun..Dom
@@ -1088,6 +1280,8 @@ void loop() {
     return;
   }
   if (stato == 0) {
+    // Messaggio one-shot: ha priorita', dirotta su PAGINA_MSG finche' ha ripetizioni.
+    if (msgRepeatLeft > 0 && pagina != PAGINA_MSG) nuova_pagina = PAGINA_MSG;
     if (pagina == PAGINA_ORARIO) {
       if (inizioPagina) {
         t_pagina = millis();
@@ -1148,6 +1342,24 @@ void loop() {
         if (cx < 0 - meteo_sceneW) {
           if (AUTO_NEXT_PAGE) nuova_pagina = PAGINA_ORARIO;
           else inizioPagina = true;
+        }
+      }
+    }
+    if (pagina == PAGINA_MSG) {
+      if (inizioPagina) {
+        cx = 31;  // il messaggio entra da destra
+        inizioPagina = false;
+      }
+      if (millis() - t1 > 75) {
+        t1 = millis();
+        strip.ClearTo(RgbColor(0));
+        scrivi(msgText, FONT_5x3, 2, cx, colore);
+        strip.Show();
+        cx--;
+        if (cx < 0 - larghezza(msgText, FONT_5x3)) {  // passata completata
+          msgRepeatLeft--;
+          if (msgRepeatLeft > 0) inizioPagina = true;        // ripeti
+          else nuova_pagina = PAGINA_ORARIO;                 // finito: torna all'orario
         }
       }
     }
@@ -1239,7 +1451,7 @@ int numEl(const char cod) {
   if (cod == '%') return 18;
   if (isAlpha(cod) && isLowerCase(cod)) return int(cod) - 78;
   if (isAlpha(cod) && isUpperCase(cod)) return int(cod) - 46;
-  return -1;
+  return 11;  // carattere non gestito (accenti, simboli) -> spazio, evita indici negativi
 }
 int ledPos(int riga, int colonna) {
   if (colonna >= 0 && colonna < 8) return (riga * 8) + colonna;
