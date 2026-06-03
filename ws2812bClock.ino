@@ -656,6 +656,14 @@ String pageFoot() {
 }
 
 void setup() {
+  // Pulizia LED il prima possibile: la ROM di boot emette byte su GPIO2/D4
+  // (= U1TXD, la linea dati WS2812) prima che parta il firmware, accendendo
+  // i primi pixel della riga 0. Spegnerli subito riduce il lampo bianco
+  // visibile sulla schermata "congelata" dopo un OTA.
+  strip.Begin();
+  strip.ClearTo(RgbColor(0));
+  strip.Show();
+
   Serial.begin(115200);
 #ifdef BUZZER_PIN
   pinMode(BUZZER_PIN, OUTPUT);
@@ -719,8 +727,8 @@ void setup() {
   setSyncProvider(aggiornaDateTime);
   setSyncInterval(3600);
 
-  // LED pronti subito: servono anche per mostrare le istruzioni del portale WiFi
-  strip.Begin();
+  // LED gia' inizializzati in cima al setup (strip.Begin()); qui regoliamo
+  // solo la luminosita' col sensore prima di disegnare lo splash.
   regolaLuminosita();
   // Splash-screen di benvenuto: resta acceso per tutto il resto del setup
   // (connessione WiFi, NTP, meteo) e viene tolto solo dall'animazione finale,
