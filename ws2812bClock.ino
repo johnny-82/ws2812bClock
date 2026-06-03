@@ -46,7 +46,8 @@ void ICACHE_RAM_ATTR pcfInputs_INT() {
 //url meteo (Open-Meteo, gratuito senza API key):
 //http://api.open-meteo.com/v1/forecast?latitude=41.21&longitude=14.27&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day&forecast_hours=7&timezone=auto
 ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
+// OTA gestito da un handler custom su update_path (vedi setup), non piu' da
+// ESP8266HTTPUpdateServer: ci serve disegnare la barra di avanzamento sui LED.
 
 RTC_DS3231 rtc;
 unsigned long adesso = 0, prima = 0;
@@ -735,21 +736,47 @@ void setup() {
   // cosi' non c'e' piu' lo schermo nero in attesa dell'ora.
   disegnaSplash();
 
-  httpUpdater.setup(&httpServer, update_path);
-  // Schermata fissa "UPDATING" mostrata appena parte il flash OTA, prima che
-  // il device si "congeli" durante la scrittura della flash.
-  Update.onStart([]() { mostraUpdating(); });
-  // Barra di avanzamento azzurra sulla riga 7 (ultima). Ridisegnata solo
-  // quando cambia il numero di pixel pieni, per non rallentare l'OTA.
-  Update.onProgress([](size_t prog, size_t total) {
-    if (total == 0) return;
-    static int lastN = -1;
-    int n = (int)((uint64_t)prog * 32 / total);  // pixel pieni 0..32
-    if (n == lastN) return;
-    lastN = n;
-    for (int c = 0; c < 32; c++)
-      strip.SetPixelColor(ledPos(7, c), c < n ? applicaLum(HtmlColor(0x0080ff)) : RgbColor(0));
-    strip.Show();
+  // Handler OTA custom (al posto di httpUpdater.setup): identico nella logica
+  // ma con feedback sui LED. NB: ESP8266HTTPUpdateServer usa Update.write(),
+  // e Update.onProgress() viene invocato SOLO da writeStream() -> non scatta
+  // mai col web updater. Per la barra ci calcoliamo l'avanzamento da
+  // upload.totalSize / upload.contentLength dentro UPLOAD_FILE_WRITE.
+  httpServer.on(update_path, HTTP_POST, []() {
+    if (Update.hasError()) {
+      httpServer.send(200, "text/plain", "Update error\n");
+    } else {
+      httpServer.client().setNoDelay(true);
+      httpServer.send(200, "text/plain", "OK, rebooting\n");
+      delay(100);
+      httpServer.client().stop();
+      ESP.restart();
+    }
+  }, []() {
+    HTTPUpload& upload = httpServer.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      mostraUpdating();  // schermata fissa "UPDATING"/"UPDATE" prima del flash
+      uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+      Update.begin(maxSketchSpace, U_FLASH);
+    } else if (upload.status == UPLOAD_FILE_WRITE && !Update.hasError()) {
+      Update.write(upload.buf, upload.currentSize);
+      // Barra di avanzamento azzurra sulla riga 7, ridisegnata solo quando
+      // cambia il numero di pixel pieni (per non rallentare il flash).
+      if (upload.contentLength > 0) {
+        static int lastN = -1;
+        int n = (int)((uint64_t)upload.totalSize * 32 / upload.contentLength);
+        if (n != lastN) {
+          lastN = n;
+          for (int c = 0; c < 32; c++)
+            strip.SetPixelColor(ledPos(7, c), c < n ? applicaLum(HtmlColor(0x0080ff)) : RgbColor(0));
+          strip.Show();
+        }
+      }
+    } else if (upload.status == UPLOAD_FILE_END && !Update.hasError()) {
+      Update.end(true);
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+      Update.end();
+    }
+    yield();
   });
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
