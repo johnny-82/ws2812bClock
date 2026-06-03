@@ -728,6 +728,9 @@ void setup() {
   disegnaSplash();
 
   httpUpdater.setup(&httpServer, update_path);
+  // Schermata fissa "UPDATING" mostrata appena parte il flash OTA, prima che
+  // il device si "congeli" durante la scrittura della flash.
+  Update.onStart([]() { mostraUpdating(); });
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
   });
@@ -1424,6 +1427,18 @@ void scrivi(String testo, byte font, int startRiga, int startColonna, unsigned i
     }
   }
 }
+// Schermata fissa (non scorrevole) mostrata all'inizio dell'OTA. Usa
+// "UPDATING" se ci sta nei 32 px, altrimenti ripiega su "UPDATE". Centrata.
+void mostraUpdating() {
+  String testo = "UPDATING";
+  if (larghezza(testo, FONT_5x3) > 32) testo = "UPDATE";
+  int w = larghezza(testo, FONT_5x3) - 1;   // -1: l'ultimo char include lo spazio finale
+  int startColonna = (32 - w) / 2;
+  if (startColonna < 0) startColonna = 0;
+  strip.ClearTo(RgbColor(0));
+  scrivi(testo, FONT_5x3, 2, startColonna, 0xff8000);  // arancione
+  strip.Show();
+}
 void disegna(RgbColor img[8][8], int startRiga, int startColonna) {
   for(int c=0;c<8;c++){
     for(int r=0;r<8;r++){
@@ -1460,7 +1475,7 @@ int ledPos(int riga, int colonna) {
   if (colonna >= 24 && colonna <= 31) return (riga * 8) + 192 + colonna - 24;
   return -1;
 }
-char* meseStr(int m) {
+const char* meseStr(int m) {
   switch (m) {
     case 1:
       return "GEN";
@@ -1501,7 +1516,7 @@ char* meseStr(int m) {
   }
   return "---";
 }
-char* ggSettStr(byte gs) {
+const char* ggSettStr(byte gs) {
   switch (gs) {
     case 1:
       return "DOM";
