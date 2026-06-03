@@ -731,6 +731,18 @@ void setup() {
   // Schermata fissa "UPDATING" mostrata appena parte il flash OTA, prima che
   // il device si "congeli" durante la scrittura della flash.
   Update.onStart([]() { mostraUpdating(); });
+  // Barra di avanzamento azzurra sulla riga 7 (ultima). Ridisegnata solo
+  // quando cambia il numero di pixel pieni, per non rallentare l'OTA.
+  Update.onProgress([](size_t prog, size_t total) {
+    if (total == 0) return;
+    static int lastN = -1;
+    int n = (int)((uint64_t)prog * 32 / total);  // pixel pieni 0..32
+    if (n == lastN) return;
+    lastN = n;
+    for (int c = 0; c < 32; c++)
+      strip.SetPixelColor(ledPos(7, c), c < n ? applicaLum(HtmlColor(0x0080ff)) : RgbColor(0));
+    strip.Show();
+  });
   httpServer.on("/version", []() {
     httpServer.send(200, "text/plain", "ws2812bClock build " __DATE__ " " __TIME__ "\n");
   });
