@@ -6,6 +6,8 @@
 // Puntatore a una icona 8x8 (come accettato da disegna()/disegnaScroll()).
 typedef RgbColor (*Icona8)[8];
 
+// Icone senza variante giorno/notte (sfondo nero): usate per la previsione.
+
 RgbColor giorno_sereno[8][8]{
   {azr,azr,azr,azr,azr,azr,azr,azr},
   {azr,azr,ylw,ylw,ylw,ylw,azr,azr},
@@ -46,65 +48,65 @@ RgbColor notte_variabile[8][8]{
   {wht,bls,bls,wht,wht,wht,wht,wht},
   {wht,wht,bls,bls,wht,wht,wht,bls}
 };
-// Icone senza variante giorno/notte (sfondo nero): usate per la previsione.
 RgbColor nuvolo[8][8]{
-  {blk,blk,blk,blk,blk,blk,blk,blk},
-  {blk,blk,blk,blk,blk,blk,blk,blk},
-  {blk,blk,blk,blk,blk,gry,gry,blk},
-  {blk,blk,blk,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,gry},
-  {blk,blk,gry,gry,gry,gry,gry,blk},
-  {blk,blk,blk,blk,blk,blk,blk,blk}
+  {rai,rai,rai,rai,rai,rai,rai,rai},
+  {rai,rai,rai,rai,rai,rai,rai,rai},
+  {rai,rai,rai,rai,rai,sno,sno,rai},
+  {rai,rai,rai,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,sno},
+  {rai,rai,sno,sno,sno,sno,sno,rai},
+  {rai,rai,rai,rai,rai,rai,rai,rai}
 };
 RgbColor coperto[8][8]{
-  {gry,gry,gry,gry,gry,blk,blk,blk},
-  {gry,gry,gry,gry,gry,blk,blk,blk},
-  {gry,gry,blk,blk,blk,blk,blk,blk},
-  {blk,blk,blk,blk,blk,gry,gry,blk},
-  {blk,blk,blk,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,gry},
-  {blk,blk,gry,gry,gry,gry,gry,blk}
+  {sno,sno,sno,sno,sno,rai,rai,rai},
+  {sno,sno,sno,sno,sno,rai,rai,rai},
+  {sno,sno,rai,rai,rai,rai,rai,rai},
+  {rai,rai,rai,rai,rai,sno,sno,rai},
+  {rai,rai,rai,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,sno},
+  {rai,rai,sno,sno,sno,sno,sno,rai}
 };
 RgbColor pioggia[8][8]{
-  {blk,blk,blk,gry,gry,blk,blk,blk},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {blk,rai,blk,blk,blk,blk,rai,blk},
-  {rai,blk,blk,rai,blk,rai,blk,blk},
-  {blk,blk,rai,blk,blk,blk,blk,blk}
+  {rai,rai,rai,sno,sno,rai,rai,rai},
+  {rai,sno,sno,sno,sno,sno,sno,rai},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,rai},
+  {rai,cyn,rai,rai,rai,rai,cyn,rai},
+  {cyn,rai,rai,cyn,rai,cyn,rai,rai},
+  {rai,rai,cyn,rai,rai,rai,rai,rai}
 };
 RgbColor temporale[8][8]{
-  {blk,blk,blk,gry,gry,blk,blk,blk},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {blk,blk,blk,ylw,ylw,blk,blk,blk},
-  {blk,blk,ylw,ylw,blk,blk,blk,blk},
-  {blk,blk,blk,ylw,blk,blk,blk,blk}
+  {rai,rai,rai,sno,sno,rai,rai,rai},
+  {rai,sno,sno,sno,sno,sno,sno,rai},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {rai,sno,sno,sno,sno,sno,sno,rai},
+  {rai,rai,rai,ylw,ylw,rai,rai,rai},
+  {rai,rai,ylw,ylw,rai,rai,rai,rai},
+  {rai,rai,rai,ylw,rai,rai,rai,rai}
 };
 RgbColor neve[8][8]{
-  {blk,blk,blk,gry,gry,blk,blk,blk},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {gry,gry,gry,gry,gry,gry,gry,gry},
-  {blk,gry,gry,gry,gry,gry,gry,blk},
-  {blk,sno,blk,blk,blk,sno,blk,blk},
-  {sno,sno,sno,blk,sno,sno,sno,blk},
-  {blk,sno,blk,blk,blk,sno,blk,blk}
+  {sno,cyn,cyn,sno,sno,cyn,cyn,sno},
+  {cyn,sno,cyn,sno,sno,cyn,sno,cyn},
+  {cyn,cyn,sno,sno,sno,sno,cyn,cyn},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {sno,sno,sno,sno,sno,sno,sno,sno},
+  {cyn,cyn,sno,sno,sno,sno,cyn,cyn},
+  {cyn,sno,cyn,sno,sno,cyn,sno,cyn},
+  {sno,cyn,cyn,sno,sno,cyn,cyn,sno}
 };
 RgbColor nebbia[8][8]{
-  {gry,wht,gry,wht,gry,wht,gry,wht},
-  {wht,gry,wht,gry,wht,gry,wht,gry},
-  {gry,wht,gry,wht,gry,wht,gry,wht},
-  {wht,gry,wht,gry,wht,gry,wht,gry},
-  {gry,wht,gry,wht,gry,wht,gry,wht},
-  {wht,gry,wht,gry,wht,gry,wht,gry},
-  {gry,wht,gry,wht,gry,wht,gry,wht},
-  {wht,gry,wht,gry,wht,gry,wht,gry}
+  {sno,wht,sno,wht,sno,wht,sno,wht},
+  {wht,sno,wht,sno,wht,sno,wht,sno},
+  {sno,wht,sno,wht,sno,wht,sno,wht},
+  {wht,sno,wht,sno,wht,sno,wht,sno},
+  {sno,wht,sno,wht,sno,wht,sno,wht},
+  {wht,sno,wht,sno,wht,sno,wht,sno},
+  {sno,wht,sno,wht,sno,wht,sno,wht},
+  {wht,sno,wht,sno,wht,sno,wht,sno}
 };
+
 #endif
