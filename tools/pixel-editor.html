@@ -273,6 +273,23 @@
     <textarea id="code" spellcheck="false"></textarea>
     <p class="hint">«Genera» scrive l'intero file qui sotto. «Importa»/«Apri» riconoscono automaticamente Icone o Font.</p>
   </div>
+
+  <!-- ============ COMPILA & CARICA (helper locale deploy.php) ============ -->
+  <div class="card" id="cardDeploy" style="min-width:320px">
+    <h2>Compila &amp; carica</h2>
+    <div class="row" style="margin-top:0">
+      <button id="depBuild">Solo build</button>
+      <button id="depOta" class="primary">Compila + OTA</button>
+      <button id="depUsb">Compila + USB</button>
+    </div>
+    <div class="row">
+      <label>Endpoint</label>
+      <input id="depUrl" type="text" value="deploy.php" size="16">
+      <span id="depState" style="font-size:12px;color:var(--mut)"></span>
+    </div>
+    <textarea id="depLog" readonly rows="12" spellcheck="false" style="background:#0d0d11;color:#bfe3bf"></textarea>
+    <textarea class="hint" readonly rows="4" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Lancia ./deploy.sh sul PC via XAMPP: «Solo build» compila soltanto, «OTA» carica via WiFi, «USB» via cavo. Salva prima i .h modificati. Richiede l'editor servito da http://localhost (non funziona da file://). Host/porta in .deploy.conf (./deploy.sh init).</textarea>
+  </div>
 </main>
 
 <script>
@@ -1101,6 +1118,36 @@ window.addEventListener('keydown', e=>{
   if(k==='z' && !e.shiftKey){ e.preventDefault(); undo(); }
   else if(k==='y' || (k==='z' && e.shiftKey)){ e.preventDefault(); redo(); }
 });
+
+// ============ COMPILA & CARICA (deploy.php) ============
+// Chiama l'helper locale e mostra in streaming l'output di deploy.sh. Lo stato
+// finale è dedotto dalla sentinella __DEPLOY_RC__ stampata da deploy.php.
+async function runDeploy(action){
+  const base=($('depUrl').value||'deploy.php').trim();
+  const url=base+(base.includes('?')?'&':'?')+'action='+action;
+  const log=$('depLog'), btns=[...document.querySelectorAll('#cardDeploy button')];
+  log.value=''; $('depState').textContent='in corso…'; btns.forEach(b=>b.disabled=true);
+  try{
+    const r=await fetch(url, { method:'POST' });
+    if(r.body && r.body.getReader){
+      const rd=r.body.getReader(), dec=new TextDecoder();
+      for(;;){ const {done,value}=await rd.read(); if(done) break;
+        log.value+=dec.decode(value,{stream:true}); log.scrollTop=log.scrollHeight; }
+    } else log.value=await r.text();
+    const m=log.value.match(/__DEPLOY_RC__=(-?\d+)/);
+    const rc = m ? +m[1] : (r.ok?0:1);
+    log.value=log.value.replace(/\n?__DEPLOY_RC__=-?\d+\n?/,'\n').replace(/\s+$/,'')+'\n';
+    log.scrollTop=log.scrollHeight;
+    $('depState').textContent = rc===0 ? '✓ completato' : '✗ errore (rc '+rc+')';
+  }catch(err){
+    log.value+='\nERRORE: '+err.message+"\n\nApri l'editor via http://localhost (XAMPP), non file://.\n";
+    $('depState').textContent='✗ non raggiungibile';
+  }finally{ btns.forEach(b=>b.disabled=false); }
+}
+$('depBuild').addEventListener('click', ()=>runDeploy('build'));
+$('depOta').addEventListener('click', ()=>runDeploy('ota'));
+$('depUsb').addEventListener('click', ()=>runDeploy('usb'));
+if(location.protocol==='file:') $('depState').textContent='apri via http://localhost';
 
 // ============ AVVIO ============
 setKind(kind);
