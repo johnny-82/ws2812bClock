@@ -525,15 +525,17 @@ void scaricaMeteo() {
         meteo_slot[i].temp = temp[k] | 0.0f;
         meteo_slot[i].umidita = hum[k] | 0;
         meteo_slot[i].wmo = wmo[k] | 0;
-        meteo_slot[i].giorno = (isday[k] | 1) != 0;
+        // NB: usare .as<int>(), NON "isday[k] | 1": con default int quel '|' diventa
+        // un OR bit-a-bit (0|1=1) e dà sempre giorno. 1=giorno, 0/assente=notte.
+        meteo_slot[i].giorno = (isday[k].as<int>() != 0);
         n++;
       }
       if (n > 0) {
         meteo_ok = true;
-        Serial.printf("Meteo: ora %.1f/wmo%d, +3h %.1f/wmo%d, +6h %.1f/wmo%d\n",
-                      meteo_slot[0].temp, meteo_slot[0].wmo,
-                      meteo_slot[1].temp, meteo_slot[1].wmo,
-                      meteo_slot[2].temp, meteo_slot[2].wmo);
+        Serial.printf("Meteo: ora %.1f/wmo%d/%s, +3h %.1f/wmo%d/%s, +6h %.1f/wmo%d/%s\n",
+                      meteo_slot[0].temp, meteo_slot[0].wmo, meteo_slot[0].giorno ? "g" : "n",
+                      meteo_slot[1].temp, meteo_slot[1].wmo, meteo_slot[1].giorno ? "g" : "n",
+                      meteo_slot[2].temp, meteo_slot[2].wmo, meteo_slot[2].giorno ? "g" : "n");
       }
     } else {
       meteo_last_err = err.c_str();
@@ -974,21 +976,23 @@ void setup() {
   // non dover aspettare il refresh automatico o la pagina meteo sui LED).
   httpServer.on("/meteo", []() {
     scaricaMeteo();
-    char buf[400];
+    char buf[460];
     snprintf(buf, sizeof(buf),
              "loc:  %s (%.4f, %.4f)\n"
              "meteo_ok: %s (http %d %s)\n"
              "aria: AQI %d (%s)\n"
              "ora:  %.1f C %d%% %s%s\n"
-             "+3h:  %.1f C %d%% %s\n"
-             "+6h:  %.1f C %d%% %s\n",
+             "+3h:  %.1f C %d%% %s%s\n"
+             "+6h:  %.1f C %d%% %s%s\n",
              meteo_nome, meteo_lat, meteo_lon,
              meteo_ok ? "si" : "no", meteo_http_code, meteo_last_err,
              aqi_ok ? aqi : -1, categoriaAQI(aqi_ok ? aqi : -1),
              meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
              meteo_slot[0].giorno ? "" : " (notte)",
              meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
-             meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo));
+             meteo_slot[1].giorno ? "" : " (notte)",
+             meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo),
+             meteo_slot[2].giorno ? "" : " (notte)");
     httpServer.send(200, "text/plain", buf);
   });
   httpServer.on("/status", []() {
