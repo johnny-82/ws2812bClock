@@ -282,6 +282,9 @@
       <button id="depOta" class="primary">Compila + OTA</button>
       <button id="depUsb">Compila + USB</button>
     </div>
+    <div class="row" id="depWarnRow" style="display:none;margin-top:6px">
+      <span style="font-size:12px;color:#ffcc66">⚠ Modifiche al file <code>.h</code> non salvate — premi «Salva .h» prima di compilare.</span>
+    </div>
     <div class="row">
       <label>Endpoint</label>
       <input id="depUrl" type="text" value="deploy.php" size="16">
@@ -344,6 +347,7 @@ let kind='icons', doc, fdoc;
 let tool='pen', lumOn=false, lum=20, painting=false;
 let txtOverlay=null;   // anteprima testo sovrapposta alla tela: {grid,w,h,x,y} oppure null
 let undoStack=[], redoStack=[], histLock=false, lastSnap=null;   // cronologia undo/redo
+let cleanHdr={icons:null, font:null};   // header .h all'ultimo salvataggio/apertura (per rilevare modifiche non salvate)
 
 const $ = id => document.getElementById(id);
 
@@ -632,6 +636,7 @@ function applyKindUI(){
   $('zoom').value=curZoom();
   buildGrid();
   $('code').value=genHeader();
+  updateDirtyHint();
 }
 
 // ============ MODALITÀ COLORE (indicizzata/RGB) ============
@@ -1062,6 +1067,7 @@ async function openViaFS(){
     const file=await h.getFile(); const text=await file.text();
     importText(text, file.name);          // imposta la modalità (icone/font)
     fileHandles[kind]=h;                  // associa l'handle alla modalità rilevata
+    markClean(kind);                      // editor allineato al file su disco
   }catch(err){ if(err.name==='AbortError') return; alert('Apertura fallita: '+err.message); }
 }
 async function saveViaFS(){
@@ -1070,12 +1076,12 @@ async function saveViaFS(){
     let h=fileHandles[kind];
     if(!h){ h=await window.showSaveFilePicker({ suggestedName:fallbackName(), types:FS_TYPES }); fileHandles[kind]=h; }
     const w=await h.createWritable(); await w.write(txt); await w.close();
-    flashSaved(h.name);
+    flashSaved(h.name); markClean(kind);
   }catch(err){ if(err.name==='AbortError') return; alert('Salvataggio fallito: '+err.message); }
 }
 $('openFile').addEventListener('click', ()=>{ if(supportsFS) openViaFS(); else $('filePick').click(); });
 $('filePick').addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return;
-  const rd=new FileReader(); rd.onload=()=>{ try{ importText(rd.result, f.name); }
+  const rd=new FileReader(); rd.onload=()=>{ try{ importText(rd.result, f.name); markClean(kind); }
     catch(err){ alert('Apertura fallita: '+err.message); } }; rd.readAsText(f); e.target.value=''; });
 $('saveFile').addEventListener('click', ()=>{ if(supportsFS){ saveViaFS(); return; }
   const txt=genHeader(); $('code').value=txt; downloadFile(txt); });
@@ -1093,8 +1099,13 @@ function save(){ const json=JSON.stringify({kind, icons:doc, font:fdoc});
   if(lastSnap===null){ lastSnap=json; return; }
   if(json===lastSnap) return;
   undoStack.push(lastSnap); if(undoStack.length>120) undoStack.shift();
-  redoStack.length=0; lastSnap=json; updateHistButtons();
+  redoStack.length=0; lastSnap=json; updateHistButtons(); updateDirtyHint();
 }
+// Modifiche non salvate = header generato diverso da quello dell'ultimo
+// salvataggio/apertura del file corrente (la navigazione non sporca l'header).
+function markClean(k){ cleanHdr[k] = (k==='font' ? genFontHeader() : genIconHeader()); updateDirtyHint(); }
+function isDirty(){ const c=cleanHdr[kind]; return c!==null && genHeader()!==c; }
+function updateDirtyHint(){ const row=$('depWarnRow'); if(row) row.style.display = isDirty() ? '' : 'none'; }
 function loadState(){ try{ const s=localStorage.getItem(LS); return s?JSON.parse(s):null; }catch(_){ return null; } }
 
 // ============ CRONOLOGIA (undo/redo) ============
@@ -1123,6 +1134,7 @@ window.addEventListener('keydown', e=>{
 // Chiama l'helper locale e mostra in streaming l'output di deploy.sh. Lo stato
 // finale è dedotto dalla sentinella __DEPLOY_RC__ stampata da deploy.php.
 async function runDeploy(action){
+  if(isDirty() && !confirm("⚠ Il file .h aperto ha modifiche non salvate.\n\nVerrà compilata la versione su disco, non quella dell'editor.\n\nOK = compila comunque   ·   Annulla = torna e premi «Salva .h»")) return;
   const base=($('depUrl').value||'deploy.php').trim();
   const url=base+(base.includes('?')?'&':'?')+'action='+action;
   const log=$('depLog'), btns=[...document.querySelectorAll('#cardDeploy button')];
@@ -1153,6 +1165,8 @@ if(location.protocol==='file:') $('depState').textContent='apri via http://local
 setKind(kind);
 lastSnap = JSON.stringify({kind, icons:doc, font:fdoc});   // base cronologia
 updateHistButtons();
+cleanHdr.icons = genIconHeader(); cleanHdr.font = genFontHeader();   // base "salvato": stato all'avvio
+updateDirtyHint();
 </script>
 </body>
 </html>
