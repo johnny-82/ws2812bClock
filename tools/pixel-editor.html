@@ -278,6 +278,12 @@
   <div class="card" id="cardDeploy" style="min-width:320px">
     <h2>Compila &amp; carica</h2>
     <div class="row" style="margin-top:0">
+      <label>Sketch</label>
+      <select id="depProject" style="min-width:150px"></select>
+      <button id="depReload" title="Aggiorna elenco sketch">⟳</button>
+      <span id="depState" style="font-size:12px;color:var(--mut)"></span>
+    </div>
+    <div class="row">
       <button id="depBuild">Solo build</button>
       <button id="depOta" class="primary">Compila + OTA</button>
       <button id="depUsb">Compila + USB</button>
@@ -285,13 +291,24 @@
     <div class="row" id="depWarnRow" style="display:none;margin-top:6px">
       <span style="font-size:12px;color:#ffcc66">⚠ Modifiche al file <code>.h</code> non salvate — premi «Salva .h» prima di compilare.</span>
     </div>
-    <div class="row">
-      <label>Endpoint</label>
-      <input id="depUrl" type="text" value="deploy.php" size="16">
-      <span id="depState" style="font-size:12px;color:var(--mut)"></span>
-    </div>
     <textarea id="depLog" readonly rows="12" spellcheck="false" style="background:#0d0d11;color:#bfe3bf"></textarea>
-    <textarea class="hint" readonly rows="4" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Lancia ./deploy.sh sul PC via XAMPP: «Solo build» compila soltanto, «OTA» carica via WiFi, «USB» via cavo. Salva prima i .h modificati. Richiede l'editor servito da http://localhost (non funziona da file://). Host/porta in .deploy.conf (./deploy.sh init).</textarea>
+    <details id="depInitDet">
+      <summary>＋ Configura un nuovo sketch (.deploy.conf)</summary>
+      <div class="row">
+        <label>Sketch</label>
+        <input id="depInitName" list="depAllList" size="18" placeholder="cartella in ~/Arduino">
+        <datalist id="depAllList"></datalist>
+      </div>
+      <div class="row">
+        <label>FQBN</label><input id="depInitFqbn" size="22" value="esp8266:esp8266:nodemcuv2">
+      </div>
+      <div class="row">
+        <label>Host OTA</label><input id="depInitHost" size="14" placeholder="nome.local">
+        <label>USB</label><input id="depInitPort" size="12" placeholder="/dev/ttyUSB0">
+      </div>
+      <div class="row"><button id="depInitBtn">Crea .deploy.conf</button></div>
+    </details>
+    <textarea class="hint" readonly rows="5" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Scegli lo sketch e lancia ./deploy.sh via XAMPP: «Solo build» compila, «OTA» carica via WiFi, «USB» via cavo. Salva prima i .h modificati. Per un nuovo sketch crea il .deploy.conf qui sopra (scheda/host/porta). Richiede l'editor su http://localhost (non file://).</textarea>
   </div>
 </main>
 
@@ -1130,13 +1147,36 @@ window.addEventListener('keydown', e=>{
   else if(k==='y' || (k==='z' && e.shiftKey)){ e.preventDefault(); redo(); }
 });
 
-// ============ COMPILA & CARICA (deploy.php) ============
-// Chiama l'helper locale e mostra in streaming l'output di deploy.sh. Lo stato
-// finale è dedotto dalla sentinella __DEPLOY_RC__ stampata da deploy.php.
+// ============ COMPILA & CARICA (deploy.php, multi-sketch) ============
+// Chiama l'helper locale per lo sketch selezionato e mostra in streaming l'output
+// di deploy.sh. Lo stato finale è dedotto dalla sentinella __DEPLOY_RC__.
+const DEP_URL='deploy.php', LS_PROJ='pixelEditor.depProject';
+function depProject(){ return $('depProject').value; }
+// Tendina degli sketch deployabili (quelli con .deploy.conf), con ripristino scelta.
+async function loadProjects(){
+  try{
+    const list = await (await fetch(DEP_URL+'?action=list')).json();
+    const sel=$('depProject'), prev = localStorage.getItem(LS_PROJ) || sel.value;
+    sel.innerHTML='';
+    if(!list.length){ const o=document.createElement('option'); o.value=''; o.textContent='(nessuno sketch configurato)'; sel.appendChild(o); }
+    list.forEach(p=>{ const o=document.createElement('option'); o.value=p.name;
+      o.textContent = p.host ? `${p.name} → ${p.host}` : p.name; sel.appendChild(o); });
+    if(prev && list.some(p=>p.name===prev)) sel.value=prev;
+  }catch(_){ $('depState').textContent='server non raggiungibile'; }
+}
+// Datalist con TUTTI gli sketch di ~/Arduino (per il form di init).
+async function loadAllSketches(){
+  try{
+    const all = await (await fetch(DEP_URL+'?action=listall')).json();
+    const dl=$('depAllList'); dl.innerHTML='';
+    all.forEach(p=>{ const o=document.createElement('option'); o.value=p.name; dl.appendChild(o); });
+  }catch(_){}
+}
 async function runDeploy(action){
+  const proj=depProject();
+  if(!proj){ $('depState').textContent='scegli uno sketch'; return; }
   if(isDirty() && !confirm("⚠ Il file .h aperto ha modifiche non salvate.\n\nVerrà compilata la versione su disco, non quella dell'editor.\n\nOK = compila comunque   ·   Annulla = torna e premi «Salva .h»")) return;
-  const base=($('depUrl').value||'deploy.php').trim();
-  const url=base+(base.includes('?')?'&':'?')+'action='+action;
+  const url=DEP_URL+'?action='+action+'&project='+encodeURIComponent(proj);
   const log=$('depLog'), btns=[...document.querySelectorAll('#cardDeploy button')];
   log.value=''; $('depState').textContent='in corso…'; btns.forEach(b=>b.disabled=true);
   try{
@@ -1156,10 +1196,28 @@ async function runDeploy(action){
     $('depState').textContent='✗ non raggiungibile';
   }finally{ btns.forEach(b=>b.disabled=false); }
 }
+// Crea il .deploy.conf di uno sketch, poi lo seleziona nella tendina.
+async function initProject(){
+  const name=$('depInitName').value.trim(), fqbn=$('depInitFqbn').value.trim();
+  if(!name){ alert('Indica la cartella dello sketch.'); return; }
+  if(!fqbn){ alert('Il FQBN è obbligatorio.'); return; }
+  const body=new URLSearchParams({fqbn, host:$('depInitHost').value.trim(), port:$('depInitPort').value.trim()});
+  try{
+    const r=await fetch(DEP_URL+'?action=init&project='+encodeURIComponent(name), {method:'POST', body});
+    $('depLog').value=await r.text();
+    if(r.ok){ localStorage.setItem(LS_PROJ, name); await loadProjects(); $('depProject').value=name;
+      $('depInitDet').open=false; $('depState').textContent='✓ '+name+' configurato'; }
+    else $('depState').textContent='✗ init fallito';
+  }catch(err){ $('depLog').value='ERRORE: '+err.message; }
+}
+$('depProject').addEventListener('change', ()=>localStorage.setItem(LS_PROJ, depProject()));
+$('depReload').addEventListener('click', ()=>{ loadProjects(); loadAllSketches(); });
 $('depBuild').addEventListener('click', ()=>runDeploy('build'));
 $('depOta').addEventListener('click', ()=>runDeploy('ota'));
 $('depUsb').addEventListener('click', ()=>runDeploy('usb'));
+$('depInitBtn').addEventListener('click', initProject);
 if(location.protocol==='file:') $('depState').textContent='apri via http://localhost';
+else { loadProjects(); loadAllSketches(); }
 
 // ============ AVVIO ============
 setKind(kind);
