@@ -1403,7 +1403,10 @@ void loop() {
       if (inizioPagina) {
         inizioPagina = false;
         // WiFi sempre attivo: se i dati sono scaduti, aggiorna prima di scorrere
-        if (!meteo_ok || millis() - meteo_ultimoFetch >= METEO_REFRESH) scaricaMeteo();
+        // anche !aqi_ok forza il refresh: l'AQI e' una richiesta HTTP separata e
+        // puo' fallire da sola; senza questo controllo resterebbe assente fino a
+        // METEO_REFRESH pur con meteo gia' valido (AQI mancante per ~10 min).
+        if (!meteo_ok || !aqi_ok || millis() - meteo_ultimoFetch >= METEO_REFRESH) scaricaMeteo();
         preparaScenaMeteo();
         cx = 31;  // la scena entra da destra
       }
@@ -1522,10 +1525,14 @@ void disegna(RgbColor img[8][8], int startRiga, int startColonna) {
 
 // Scala un colore per la luminosita' globale corrente (0-255). NeoPixelBus base
 // non ha una luminanza globale, quindi la applichiamo qui prima di SetPixelColor.
+// NB: +127 = ARROTONDAMENTO, non troncamento. Con luminosita=1 il troncamento
+// (c*1/255) azzerava ogni componente < 255: le icone reggevano (palette satura a
+// 255 su R o B) ma l'AQI spariva (es. "discreta" 0x96C800 = 150,200,0 -> nero).
+// Arrotondando, ogni componente >=128 accende almeno 1 LED. Vedi coloreAQI().
 RgbColor applicaLum(RgbColor c) {
-  return RgbColor((uint16_t)c.R * luminosita / 255,
-                  (uint16_t)c.G * luminosita / 255,
-                  (uint16_t)c.B * luminosita / 255);
+  return RgbColor(((uint16_t)c.R * luminosita + 127) / 255,
+                  ((uint16_t)c.G * luminosita + 127) / 255,
+                  ((uint16_t)c.B * luminosita + 127) / 255);
 }
 int numEl(const char cod) {
   if (isDigit(cod)) return (cod - '0') + 1;
