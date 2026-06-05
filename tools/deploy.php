@@ -39,7 +39,13 @@ if ($proj === false || !is_file("$proj/deploy.sh")) {
 // bisogno per trovare ~/.arduino15 (core/librerie) e il binario in ~/bin.
 $home = '/home/giovanni';
 $path = "$home/bin:/usr/local/bin:/usr/bin:/bin";
-$env  = 'HOME=' . escapeshellarg($home) . ' PATH=' . escapeshellarg($path);
+// `env -u LD_LIBRARY_PATH -u LD_PRELOAD`: Apache/XAMPP esporta LD_LIBRARY_PATH=
+// /opt/lampp/lib, e così il curl di sistema (usato da deploy.sh per l'OTA)
+// caricherebbe la libcurl vecchia di XAMPP -> "undefined symbol curl_global_trace".
+// Ripulendo l'ambiente curl usa di nuovo le librerie di sistema.
+$env  = 'env -u LD_LIBRARY_PATH -u LD_PRELOAD'
+      . ' HOME=' . escapeshellarg($home)
+      . ' PATH=' . escapeshellarg($path);
 
 chdir($proj);
 $cmd = "$env ./deploy.sh {$flags[$action]} 2>&1";
