@@ -57,6 +57,18 @@ if ($action === 'list' || $action === 'listall') {
   exit;
 }
 
+// --- schede installate (FQBN) per il form di init ---
+if ($action === 'boards') {
+  header('Content-Type: application/json');
+  $env = 'env -u LD_LIBRARY_PATH -u LD_PRELOAD HOME=' . escapeshellarg($HOME) . ' PATH=' . escapeshellarg($PATH);
+  $d = json_decode((string)shell_exec("$env arduino-cli board listall --format json 2>/dev/null"), true);
+  $out = [];
+  foreach (($d['boards'] ?? []) as $b)
+    if (!empty($b['fqbn'])) $out[] = ['fqbn' => $b['fqbn'], 'name' => $b['name'] ?? ''];
+  echo json_encode($out);
+  exit;
+}
+
 // --- init: crea il .deploy.conf di uno sketch ---
 if ($action === 'init') {
   header('Content-Type: text/plain; charset=utf-8');

@@ -300,7 +300,8 @@
         <datalist id="depAllList"></datalist>
       </div>
       <div class="row">
-        <label>FQBN</label><input id="depInitFqbn" size="22" value="esp8266:esp8266:nodemcuv2">
+        <label>FQBN</label><input id="depInitFqbn" list="depFqbnList" size="28" value="esp8266:esp8266:nodemcuv2">
+        <datalist id="depFqbnList"></datalist>
       </div>
       <div class="row">
         <label>Host OTA</label><input id="depInitHost" size="14" placeholder="nome.local">
@@ -1172,6 +1173,14 @@ async function loadAllSketches(){
     all.forEach(p=>{ const o=document.createElement('option'); o.value=p.name; dl.appendChild(o); });
   }catch(_){}
 }
+// Datalist degli FQBN delle schede installate (arduino-cli board listall).
+async function loadBoards(){
+  try{
+    const bs = await (await fetch(DEP_URL+'?action=boards')).json();
+    const dl=$('depFqbnList'); dl.innerHTML='';
+    bs.forEach(b=>{ const o=document.createElement('option'); o.value=b.fqbn; o.textContent=b.name; dl.appendChild(o); });
+  }catch(_){}
+}
 async function runDeploy(action){
   const proj=depProject();
   if(!proj){ $('depState').textContent='scegli uno sketch'; return; }
@@ -1211,13 +1220,13 @@ async function initProject(){
   }catch(err){ $('depLog').value='ERRORE: '+err.message; }
 }
 $('depProject').addEventListener('change', ()=>localStorage.setItem(LS_PROJ, depProject()));
-$('depReload').addEventListener('click', ()=>{ loadProjects(); loadAllSketches(); });
+$('depReload').addEventListener('click', ()=>{ loadProjects(); loadAllSketches(); loadBoards(); });
 $('depBuild').addEventListener('click', ()=>runDeploy('build'));
 $('depOta').addEventListener('click', ()=>runDeploy('ota'));
 $('depUsb').addEventListener('click', ()=>runDeploy('usb'));
 $('depInitBtn').addEventListener('click', initProject);
 if(location.protocol==='file:') $('depState').textContent='apri via http://localhost';
-else { loadProjects(); loadAllSketches(); }
+else { loadProjects(); loadAllSketches(); loadBoards(); }
 
 // ============ AVVIO ============
 setKind(kind);
