@@ -227,10 +227,16 @@ bool meteo_ok = false;
 unsigned long meteo_ultimoFetch = 0;
 int meteo_http_code = 0;          // ultimo codice HTTP (per diagnostica /meteo)
 const char* meteo_last_err = "";  // ultimo errore di parsing/fetch (diagnostica)
+int meteo_len = 0;                // lunghezza ultimo payload (per diagnosticare troncature)
+unsigned int meteo_fail = 0;      // fetch/parse meteo falliti dal boot
 
 // Qualita' dell'aria (European AQI da Open-Meteo air-quality), appesa alla scena meteo.
 int aqi = -1;
 bool aqi_ok = false;
+int aqi_http = 0;                 // ultimo codice HTTP AQI (diagnostica)
+int aqi_len = 0;                  // lunghezza ultimo payload AQI
+unsigned int aqi_fail = 0;        // fetch/parse AQI falliti dal boot
+const char* aqi_last_err = "";    // ultimo errore AQI
 
 // Messaggio scorrevole one-shot (impostato da /msg, non persistito in EEPROM).
 #define MSG_REPEAT_DEF 3
@@ -497,6 +503,7 @@ void scaricaMeteo() {
                + "&hourly=temperature_2m,relative_humidity_2m,weather_code,is_day"
                + "&forecast_hours=7&timezone=auto";
   http.begin(client, url);
+  http.setTimeout(5000);          // non bloccare lo scroll oltre 5s su fetch lenti
   int code = http.GET();
   meteo_http_code = code;
   meteo_last_err = "";
@@ -509,6 +516,7 @@ void scaricaMeteo() {
     // piccolo (~600 byte con forecast_hours=7), quindi niente filtro: si parsa
     // l'intero documento (gli array sono PARALLELI: hourly.temperature_2m[], ...).
     String payload = http.getString();
+    meteo_len = payload.length();
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, payload);
     if (!err) {
@@ -536,14 +544,19 @@ void scaricaMeteo() {
                       meteo_slot[0].temp, meteo_slot[0].wmo, meteo_slot[0].giorno ? "g" : "n",
                       meteo_slot[1].temp, meteo_slot[1].wmo, meteo_slot[1].giorno ? "g" : "n",
                       meteo_slot[2].temp, meteo_slot[2].wmo, meteo_slot[2].giorno ? "g" : "n");
+      } else {
+        meteo_last_err = "payload incompleto";   // parse ok ma 0 slot (es. troncato)
+        meteo_fail++;
       }
     } else {
       meteo_last_err = err.c_str();
+      meteo_fail++;
       Serial.print("Errore parsing JSON meteo: ");
       Serial.println(err.c_str());
     }
   } else {
     meteo_last_err = "HTTP != 200";
+    meteo_fail++;
   }
   http.end();
   scaricaAQ();   // aggiorna l'AQI insieme al meteo (stesso refresh)
@@ -558,18 +571,23 @@ void scaricaAQ() {
   String url = "http://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + String(meteo_lat, 4)
                + "&longitude=" + String(meteo_lon, 4) + "&current=european_aqi";
   http.begin(client, url);
+  http.setTimeout(5000);
   int code = http.GET();
+  aqi_http = code;
+  aqi_last_err = "";
   Serial.print("AQ HTTP ");
   Serial.println(code);
   if (code == HTTP_CODE_OK) {
     String payload = http.getString();   // chunked: getString() decodifica (come meteo)
+    aqi_len = payload.length();
     JsonDocument doc;
-    if (!deserializeJson(doc, payload)) {
+    DeserializationError err = deserializeJson(doc, payload);
+    if (!err) {
       JsonVariant v = doc["current"]["european_aqi"];
       if (!v.isNull()) { aqi = v.as<int>(); aqi_ok = true; }
-      else aqi_ok = false;
-    }
-  }
+      else { aqi_last_err = "european_aqi assente"; aqi_fail++; }   // tieni l'ultimo buono
+    } else { aqi_last_err = err.c_str(); aqi_fail++; }
+  } else { aqi_last_err = "HTTP != 200"; aqi_fail++; }
   http.end();
 }
 
@@ -997,7 +1015,7 @@ void setup() {
   });
   httpServer.on("/status", []() {
     time_t n = now();
-    char buf[420];
+    char buf[600];
     snprintf(buf, sizeof(buf),
              "ora: %02d/%02d/%04d %02d:%02d:%02d\n"
              "loc: %s (%.4f, %.4f)\n"
@@ -1006,6 +1024,8 @@ void setup() {
              "ora:  %.1f C %d%% %s\n"
              "+3h:  %.1f C %d%% %s\n"
              "+6h:  %.1f C %d%% %s\n"
+             "meteo dbg: len=%d fail=%u err=%s\n"
+             "aria dbg:  ok=%s http=%d len=%d fail=%u err=%s\n"
              "wifi rssi: %ld dBm\n"
              "luminosita: %d/255\n"
              "ambient: %d\n",
@@ -1016,6 +1036,8 @@ void setup() {
              meteo_slot[0].temp, meteo_slot[0].umidita, meteoDesc(meteo_slot[0].wmo),
              meteo_slot[1].temp, meteo_slot[1].umidita, meteoDesc(meteo_slot[1].wmo),
              meteo_slot[2].temp, meteo_slot[2].umidita, meteoDesc(meteo_slot[2].wmo),
+             meteo_len, meteo_fail, meteo_last_err,
+             aqi_ok ? "si" : "no", aqi_http, aqi_len, aqi_fail, aqi_last_err,
              (long)WiFi.RSSI(), luminosita, ambient_light);
     String h = pageHead("Stato");
     h += "<pre>";
