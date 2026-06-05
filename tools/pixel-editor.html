@@ -111,6 +111,11 @@
       <button id="rot90" title="Ruota 90° in senso orario">⟳ 90°</button>
     </div>
     <div class="row">
+      <label>Zoom</label><input id="zoom" type="range" min="6" max="48" value="24">
+    </div>
+    <div class="row">
+      <button id="undoBtn" title="Annulla (Ctrl+Z)" disabled>↶ Annulla</button>
+      <button id="redoBtn" title="Rifai (Ctrl+Y)" disabled>↷ Rifai</button>
       <button id="clear">Svuota</button>
       <button id="fillAll">Riempi tutto</button>
       <label><input type="checkbox" id="lumOn"> Anteprima luminosità</label>
@@ -133,9 +138,6 @@
       <label>×&nbsp;A</label><input type="number" id="rows" min="1" max="128" value="8">
       <button id="resize" title="Ridimensiona l'icona corrente">Ridimensiona</button>
     </div>
-    <div class="row">
-      <label>Zoom</label><input id="zoom" type="range" min="6" max="48" value="24">
-    </div>
   </div>
 
   <!-- ============ FONT & GLIFI ============ -->
@@ -156,15 +158,20 @@
       <label title="campo 'nc' della riga d'intestazione">nc</label><input type="number" id="fnc" value="0">
       <button id="fresize" title="Applica le dimensioni a TUTTI i glifi del font">Applica</button>
     </div>
-    <p class="hint">Dimensioni valide per tutti i glifi (max 8 righe: ogni colonna è 1 byte). L'etichetta di ogni glifo finisce nel commento <code>//</code> (vuota = nessun commento).</p>
+    <textarea class="hint" readonly rows="3" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Dimensioni valide per tutti i glifi (max 8 righe: ogni colonna è 1 byte). L'etichetta di ogni glifo finisce nel commento // (vuota = nessun commento).</textarea>
     <div id="glyphList" class="list"></div>
     <div class="row">
       <button id="addGlyph">+ Glifo</button>
       <button id="dupGlyph">Duplica</button>
     </div>
     <div class="row">
-      <label>Zoom</label><input id="fzoom" type="range" min="6" max="48" value="24">
+      <label>Anteprima</label>
+      <input id="fontPrevTxt" type="text" value="ABC 123" size="10">
     </div>
+    <div class="row">
+      <canvas id="fontPrevCv" style="image-rendering:pixelated;background:#000;border-radius:4px;outline:1px solid #ffffff14;max-width:100%"></canvas>
+    </div>
+    <textarea class="hint" readonly rows="3" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Anteprima a larghezza variabile come l'orologio (spaziatura 1 px). I caratteri sono cercati per etichetta del glifo (commento //).</textarea>
   </div>
 
   <!-- ============ COLORI ============ -->
@@ -176,13 +183,13 @@
         <button data-mode="rgb">RGB libero</button>
       </span>
     </div>
-    <p class="hint" id="modeHint">Indicizzata: palette di <code>#define</code> condivisa (formato meteo.h).</p>
+    <p class="hint" id="modeHint">Indicizzata: palette di <code>#define</code> <code>RgbColor</code> condivisa.</p>
 
     <div id="palBox">
       <div id="palette"></div>
       <div class="row">
         <button id="addColor">+ Colore</button>
-        <button id="loadMeteo">Preset meteo.h</button>
+        <button id="loadPreset">Palette d'esempio</button>
       </div>
       <div class="row">
         <button id="loadPal" title="Carica una palette da un file .h (palette.h) e applicala">Carica palette…</button>
@@ -210,15 +217,34 @@
       <input id="txtIn" type="text" value="CIAO" size="10" placeholder="Testo">
     </div>
     <div class="row">
+      <label>Font</label>
+      <select id="txtFontSel"></select>
+      <button id="txtFontLoad" title="Carica un font dal file .h (formato myFont.h)">Carica .h…</button>
+      <input id="txtFontPick" type="file" accept=".h,.hpp,.txt,text/plain" style="display:none">
+    </div>
+    <div class="row">
       <label>X</label><input type="number" id="txtX" value="0">
       <label>Y</label><input type="number" id="txtY" value="0">
       <label title="Spazio tra i caratteri">Sp</label><input type="number" id="txtGap" value="1" min="0" max="6">
     </div>
     <div class="row">
+      <label><input type="checkbox" id="txtPreview"> Anteprima sulla tela</label>
+      <span class="seg">
+        <button id="txtUp" title="Sposta su">↑</button>
+        <button id="txtDown" title="Sposta giù">↓</button>
+        <button id="txtLeft" title="Sposta a sinistra">←</button>
+        <button id="txtRight" title="Sposta a destra">→</button>
+      </span>
+    </div>
+    <div class="row">
+      <span style="font-size:12px;color:var(--mut)">Glifi</span>
+      <canvas id="txtPrev" style="image-rendering:pixelated;background:#000;border-radius:4px;outline:1px solid #ffffff14;max-width:100%"></canvas>
+    </div>
+    <div class="row">
       <button id="txtStamp" class="primary">Stampa nell'icona</button>
       <button id="txtFit" title="Ridimensiona l'icona per contenere il testo">Adatta icona</button>
     </div>
-    <p class="hint">Font integrato <b>3×5</b> per stampare scritte dentro un'icona. Disegna col colore selezionato; i pixel vuoti non toccano lo sfondo.</p>
+    <textarea class="hint" readonly rows="5" style="width:400px;resize:none;cursor:default;color:var(--mut);font-family:inherit;background:transparent;border:none;padding:0">Stampa scritte dentro un'icona col font selezionato (3×5 integrato o caricato da .h). Larghezza proporzionale come l'orologio (Sp = spaziatura, 1 = identica al firmware). Disegna col colore selezionato; i pixel vuoti non toccano lo sfondo.</textarea>
   </div>
 
   <!-- ============ FILE / CODICE ============ -->
@@ -253,7 +279,8 @@
 "use strict";
 const LS = 'pixelEditor.v3';
 
-const PRESET_METEO = [
+// Palette d'esempio (colori generici riutilizzabili come punto di partenza).
+const PRESET_PALETTE = [
   { name:'blk', hex:'#000000' },
   { name:'azr', hex:'#007fff' },
   { name:'bls', hex:'#000064' },
@@ -298,6 +325,8 @@ let kind='icons', doc, fdoc;
   else { doc=freshDoc(); fdoc=freshFontDoc(); } })();
 
 let tool='pen', lumOn=false, lum=20, painting=false;
+let txtOverlay=null;   // anteprima testo sovrapposta alla tela: {grid,w,h,x,y} oppure null
+let undoStack=[], redoStack=[], histLock=false, lastSnap=null;   // cronologia undo/redo
 
 const $ = id => document.getElementById(id);
 
@@ -340,7 +369,19 @@ function buildGrid(){
 }
 function paintCell(r,c,v){ curCell().grid[r][c]=v; cellEls[r][c].style.background=applyLum(renderHex(v)); }
 function redraw(){ const ic=curCell(), g=ic.grid;
-  for(let r=0;r<ic.h;r++) for(let c=0;c<ic.w;c++) cellEls[r][c].style.background=applyLum(renderHex(g[r][c])); }
+  for(let r=0;r<ic.h;r++) for(let c=0;c<ic.w;c++){ const el=cellEls[r][c];
+    el.style.background=applyLum(renderHex(g[r][c])); el.style.boxShadow=''; }
+  renderOverlay(); }
+// Anteprima del testo sovrapposta alla tela (solo Icone): mostra i pixel del testo
+// alla posizione corrente SENZA scriverli nella griglia. Un anello chiaro li
+// distingue dai pixel già disegnati; vengono fissati solo con «Stampa nell'icona».
+function renderOverlay(){
+  if(!txtOverlay || kind!=='icons') return;
+  const ic=curIcon(), {grid,w,h,x,y}=txtOverlay, col=applyLum(cellHexVal(paintValue()));
+  for(let r=0;r<h;r++) for(let c=0;c<w;c++){ if(!grid[r][c]) continue;
+    const rr=y+r, cc=x+c; if(rr<0||cc<0||rr>=ic.h||cc>=ic.w) continue;
+    const el=cellEls[rr][cc]; el.style.background=col; el.style.boxShadow='inset 0 0 0 2px #ffffffcc'; }
+}
 
 let dragStart=null, dragVal=null, snapshot=null;   // per linea/rettangolo
 function onDown(r,c,e){
@@ -432,11 +473,15 @@ function renderIconList(){
     const el=document.createElement('div'); el.className='ico'+(i===doc.cur?' sel':'');
     el.innerHTML=`<canvas></canvas><input class="nm" value="${esc(ic.name)}">
       <span class="sz">${ic.w}×${ic.h}</span>
+      <button class="mini up" title="Sposta su"${i===0?' disabled style="opacity:.3;cursor:default"':''}>▲</button>
+      <button class="mini down" title="Sposta giù"${i===doc.icons.length-1?' disabled style="opacity:.3;cursor:default"':''}>▼</button>
       <button class="mini dup" title="Duplica">⧉</button>
       <button class="mini del" title="Elimina">🗑</button>`;
     drawThumb(el.querySelector('canvas'), ic);
     el.addEventListener('click', e=>{ if(e.target.matches('input,button')) return; doc.cur=i; buildGrid(); renderIconList(); save(); });
     el.querySelector('.nm').addEventListener('input', e=>{ ic.name=e.target.value.trim()||('icona'+i); if(i===doc.cur)$('curName').textContent=ic.name; save(); });
+    el.querySelector('.up').addEventListener('click', ()=>moveIcon(i,-1));
+    el.querySelector('.down').addEventListener('click', ()=>moveIcon(i,+1));
     el.querySelector('.dup').addEventListener('click', ()=>duplicateIcon(i));
     el.querySelector('.del').addEventListener('click', ()=>deleteIcon(i));
     listEl.appendChild(el);
@@ -446,6 +491,11 @@ function refreshIconThumb(){ const el=listEl.children[doc.cur]; if(el) drawThumb
 function addIcon(){ const ic=curIcon();
   doc.icons.push({name:'icona'+doc.icons.length, w:ic?ic.w:8, h:ic?ic.h:8, grid:makeGrid(ic?ic.w:8, ic?ic.h:8, bgValue())});
   doc.cur=doc.icons.length-1; buildGrid(); renderIconList(); save(); }
+// Scambia l'icona i col vicino (dir=-1 su, +1 giù): cambia l'ordine nel file .h.
+function moveIcon(i,dir){ const j=i+dir; if(j<0||j>=doc.icons.length) return;
+  [doc.icons[i], doc.icons[j]] = [doc.icons[j], doc.icons[i]];
+  if(doc.cur===i) doc.cur=j; else if(doc.cur===j) doc.cur=i;
+  renderIconList(); save(); }
 function duplicateIcon(i){ const s=doc.icons[i];
   doc.icons.splice(i+1,0,{name:s.name+'_copy', w:s.w, h:s.h, grid:s.grid.map(r=>r.slice())});
   doc.cur=i+1; buildGrid(); renderIconList(); save(); }
@@ -464,7 +514,7 @@ function resizeIconTo(w,h){
   ic.w=w; ic.h=h; ic.grid=g; buildGrid(); renderIconList(); save();
 }
 $('resize').addEventListener('click', ()=>resizeIconTo(+$('cols').value||8, +$('rows').value||8));
-$('zoom').addEventListener('input', e=>{ doc.zoom=+e.target.value; gridEl.style.setProperty('--cs',doc.zoom+'px'); save(); });
+$('zoom').addEventListener('input', e=>{ activeDoc().zoom=+e.target.value; gridEl.style.setProperty('--cs',e.target.value+'px'); save(); });
 
 // ============ FONT & GLIFI ============
 const glyphListEl=$('glyphList');
@@ -477,22 +527,43 @@ function renderGlyphList(){
     el.innerHTML=`<canvas></canvas>
       <input class="nm" value="${esc(gl.ch)}" placeholder="(commento)" maxlength="12" style="max-width:90px;flex:none">
       <span class="sz">${gl.h}×${gl.w}</span>
+      <button class="mini up" title="Sposta su"${i===0?' disabled style="opacity:.3;cursor:default"':''}>▲</button>
+      <button class="mini down" title="Sposta giù"${i===f.glyphs.length-1?' disabled style="opacity:.3;cursor:default"':''}>▼</button>
       <button class="mini dup" title="Duplica">⧉</button>
       <button class="mini del" title="Elimina">🗑</button>`;
     drawGlyphThumb(el.querySelector('canvas'), gl);
     el.addEventListener('click', e=>{ if(e.target.matches('input,button')) return; fdoc.curGlyph=i; buildGrid(); renderGlyphList(); save(); });
     el.querySelector('.nm').addEventListener('input', e=>{ gl.ch=e.target.value; if(i===fdoc.curGlyph)$('curName').textContent=cellName(); save(); });
+    el.querySelector('.up').addEventListener('click', ()=>moveGlyph(i,-1));
+    el.querySelector('.down').addEventListener('click', ()=>moveGlyph(i,+1));
     el.querySelector('.dup').addEventListener('click', ()=>dupGlyph(i));
     el.querySelector('.del').addEventListener('click', ()=>delGlyph(i));
     glyphListEl.appendChild(el);
   });
+  updateFontPreview();
 }
-function refreshGlyphThumb(){ const el=glyphListEl.children[fdoc.curGlyph]; if(el) drawGlyphThumb(el.querySelector('canvas'), curGlyph()); }
+function refreshGlyphThumb(){ const el=glyphListEl.children[fdoc.curGlyph]; if(el) drawGlyphThumb(el.querySelector('canvas'), curGlyph()); updateFontPreview(); }
+// Anteprima stringa del font in lavorazione: usa lo STESSO motore del tool Testo
+// (renderText, larghezza variabile) col font corrente convertito al volo.
+function updateFontPreview(){
+  if(kind!=='font') return; const cv=$('fontPrevCv'); if(!cv) return;
+  const {h,w,grid}=renderText(fontFromParsed(curFont()), $('fontPrevTxt').value||'', 1);
+  const scale=6; cv.width=Math.max(1,w)*scale; cv.height=Math.max(1,h)*scale;
+  const cx=cv.getContext('2d'); cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height);
+  cx.fillStyle='#e6e6ea';
+  for(let r=0;r<h;r++) for(let c=0;c<w;c++) if(grid[r][c]) cx.fillRect(c*scale,r*scale,scale,scale);
+}
 function addGlyph(){ const f=curFont(); f.glyphs.push({ch:'', w:f.cols, h:f.rows, grid:makeGrid(f.cols,f.rows,0)});
   fdoc.curGlyph=f.glyphs.length-1; buildGrid(); renderGlyphList(); save(); }
 function dupGlyph(i){ const f=curFont(), s=f.glyphs[i];
   f.glyphs.splice(i+1,0,{ch:s.ch, w:s.w, h:s.h, grid:s.grid.map(r=>r.slice())});
   fdoc.curGlyph=i+1; buildGrid(); renderGlyphList(); save(); }
+// Scambia il glifo i col vicino (dir=-1 su, +1 giù); l'ordine determina l'indice
+// nel font generato, quindi cambia il codice del carattere associato.
+function moveGlyph(i,dir){ const f=curFont(), j=i+dir; if(j<0||j>=f.glyphs.length) return;
+  [f.glyphs[i], f.glyphs[j]] = [f.glyphs[j], f.glyphs[i]];
+  if(fdoc.curGlyph===i) fdoc.curGlyph=j; else if(fdoc.curGlyph===j) fdoc.curGlyph=i;
+  renderGlyphList(); save(); }
 function delGlyph(i){ const f=curFont(); if(f.glyphs.length<=1){ alert('Serve almeno un glifo.'); return; }
   if(!confirm('Eliminare il glifo?')) return;
   f.glyphs.splice(i,1); if(fdoc.curGlyph>=f.glyphs.length) fdoc.curGlyph=f.glyphs.length-1; if(fdoc.curGlyph>i) fdoc.curGlyph--;
@@ -523,7 +594,7 @@ function resizeFontTo(cols,rows){ cols=clamp(cols,1,32); rows=clamp(rows,1,8); c
 }
 $('fresize').addEventListener('click', ()=>resizeFontTo(+$('fcols').value||3, +$('frows').value||5));
 $('fnc').addEventListener('input', e=>{ curFont().nc=+e.target.value||0; renderFontSel(); save(); });
-$('fzoom').addEventListener('input', e=>{ fdoc.zoom=+e.target.value; gridEl.style.setProperty('--cs',fdoc.zoom+'px'); save(); });
+$('fontPrevTxt').addEventListener('input', updateFontPreview);
 
 // ============ MODALITÀ ICONE/FONT ============
 document.querySelectorAll('#kindSeg button').forEach(b=>b.addEventListener('click', ()=>setKind(b.dataset.kind)));
@@ -539,8 +610,9 @@ function applyKindUI(){
   $('cardFont').style.display = f?'':'none';
   const d=activeDoc();
   $('fileName').value=d.fileName; $('preamble').value=d.preamble;
-  if(f){ renderFontSel(); renderGlyphList(); $('fzoom').value=fdoc.zoom; }
-  else { applyModeUI(); renderIconList(); $('zoom').value=doc.zoom; $('rgbPick').value=doc.rgbPick; $('rgbBg').value=doc.rgbBg; }
+  if(f){ renderFontSel(); renderGlyphList(); }
+  else { applyModeUI(); renderIconList(); $('rgbPick').value=doc.rgbPick; $('rgbBg').value=doc.rgbBg; }
+  $('zoom').value=curZoom();
   buildGrid();
   $('code').value=genHeader();
 }
@@ -563,7 +635,7 @@ function applyModeUI(){
   const ix=doc.mode==='indexed';
   palBox.style.display=ix?'':'none'; rgbBox.style.display=ix?'none':'';
   document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.mode===doc.mode));
-  $('modeHint').textContent=ix?'Indicizzata: palette di #define condivisa (formato meteo.h).'
+  $('modeHint').textContent=ix?'Indicizzata: palette di #define RgbColor condivisa.'
                               :'RGB libero: ogni cella un colore; export uint8[H][W][3].';
   if(ix) renderPalette();
 }
@@ -636,8 +708,8 @@ function genPaletteHeader(){
   return out;
 }
 
-$('loadMeteo').addEventListener('click', ()=>{ if(!confirm('Sostituire la palette con il preset meteo.h?')) return;
-  applyPalette(PRESET_METEO, 0); });
+$('loadPreset').addEventListener('click', ()=>{ if(!confirm("Sostituire la palette con quella d'esempio?")) return;
+  applyPalette(PRESET_PALETTE, 0); });
 
 let paletteHandle=null;   // handle File System Access dedicato al file palette.h
 $('loadPal').addEventListener('click', async ()=>{
@@ -695,22 +767,107 @@ const FONT3x5 = {
   '!':['010','010','010','000','010'], '?':['111','001','010','000','010'],
   '°':['010','101','010','000','000'],
 };
-function textWidth(txt, gap){ if(!txt.length) return 0; return txt.length*(3+gap)-gap; }
-$('txtStamp').addEventListener('click', ()=>{
-  const ic=curIcon(), txt=($('txtIn').value||'').toUpperCase();
-  let x=+$('txtX').value||0; const y=+$('txtY').value||0, gap=clamp(+$('txtGap').value||0,0,6), v=paintValue();
-  for(const ch of txt){ const gl=FONT3x5[ch]||FONT3x5[' '];
-    for(let r=0;r<5;r++) for(let c=0;c<3;c++){ if(gl[r][c]==='1'){ const rr=y+r, cc=x+c;
-      if(rr>=0&&cc>=0&&rr<ic.h&&cc<ic.w) ic.grid[rr][cc]=v; } }
-    x += 3+gap;
+// Font di testo normalizzati: { name, h, w (larghezza di default), glyphs:{CH:grid 0/1} }.
+function makeFont3x5(){ const glyphs={};
+  for(const k in FONT3x5) glyphs[k]=FONT3x5[k].map(r=>r.split('').map(Number));
+  return { name:'3×5 integrato', h:5, w:3, glyphs }; }
+// Converte un font parsato (parseFontHeader) in font di testo: la chiave di ricerca
+// è l'etichetta del commento del glifo (in maiuscolo se è un solo carattere).
+function fontFromParsed(f){ const glyphs={};
+  f.glyphs.forEach(gl=>{ let key=(gl.ch||'').trim(); if(!key) return;
+    if(key.length===1) key=key.toUpperCase();
+    glyphs[key]=gl.grid.map(r=>r.slice()); });
+  return { name:f.name, h:f.rows, w:f.cols, glyphs }; }
+
+let textFonts=[makeFont3x5()], textFontIdx=0;
+function activeTextFont(){ return textFonts[textFontIdx]; }
+function glyphFor(font, ch){ return font.glyphs[ch] || font.glyphs[ch.toUpperCase()] || font.glyphs[ch.toLowerCase()] || null; }
+// Larghezza "di contenuto" di un glifo = ultima colonna non vuota + 1 (0 se vuoto).
+// Stessa regola del firmware (larghezza/scrivi in ws2812bClock.ino): una colonna
+// conta se contiene almeno un pixel acceso.
+function glyphContentW(grid){
+  const h=grid.length, cols=grid[0]?grid[0].length:0; let last=-1;
+  for(let c=0;c<cols;c++){ for(let r=0;r<h;r++){ if(grid[r][c]){ last=c; break; } } }
+  return last+1;
+}
+// Compone il testo in una griglia 0/1 a LARGHEZZA VARIABILE come l'orologio: ogni
+// glifo occupa solo le sue colonne di contenuto, seguite da 'gap' colonne di
+// spaziatura (gap=1 = identico al firmware). Spazi/glifi vuoti = blocco largo
+// floor(cols/3), coerente con la regola del firmware per lo spazio.
+function renderText(font, txt, gap){
+  const h=font.h, cols=font.w||1, rows=Array.from({length:h},()=>[]); let first=true;
+  for(const ch of txt){
+    const gl = ch===' ' ? null : glyphFor(font,ch);
+    let cw = gl ? glyphContentW(gl) : 0;
+    const blank = cw===0;                         // spazio o glifo vuoto/sconosciuto
+    if(blank) cw = Math.floor(cols/3) || 1;
+    if(!first) for(let r=0;r<h;r++) for(let g=0;g<gap;g++) rows[r].push(0);
+    for(let r=0;r<h;r++) for(let c=0;c<cw;c++) rows[r].push(!blank && gl[r] && gl[r][c] ? 1 : 0);
+    first=false;
   }
+  return { h, w: rows[0]?rows[0].length:0, grid:rows };
+}
+function renderTextFontSel(){ const sel=$('txtFontSel'); sel.innerHTML='';
+  textFonts.forEach((f,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=f.name; sel.appendChild(o); });
+  sel.value=textFontIdx; }
+function updateTextPreview(){
+  const font=activeTextFont(), gap=clamp(+$('txtGap').value||0,0,6);
+  const {h,w,grid}=renderText(font, $('txtIn').value||'', gap);
+  const cv=$('txtPrev'), scale=6; cv.width=Math.max(1,w)*scale; cv.height=Math.max(1,h)*scale;
+  const cx=cv.getContext('2d'); cx.fillStyle='#000'; cx.fillRect(0,0,cv.width,cv.height);
+  cx.fillStyle = (doc.mode==='indexed' ? ((doc.palette[doc.selIdx]||{}).hex||'#ffcc00') : doc.rgbPick);
+  for(let r=0;r<h;r++) for(let c=0;c<w;c++) if(grid[r][c]) cx.fillRect(c*scale,r*scale,scale,scale);
+}
+// --- Overlay di anteprima sulla tela ---
+function buildOverlayGrid(){ const gap=clamp(+$('txtGap').value||0,0,6);
+  return renderText(activeTextFont(), $('txtIn').value||'', gap); }
+function setOverlay(on){
+  if(on){ const g=buildOverlayGrid(); txtOverlay={ grid:g.grid, w:g.w, h:g.h, x:+$('txtX').value||0, y:+$('txtY').value||0 }; }
+  else txtOverlay=null;
+  $('txtPreview').checked=!!txtOverlay; redraw();
+}
+function overlayRefresh(){ if(!txtOverlay) return; const g=buildOverlayGrid();
+  txtOverlay.grid=g.grid; txtOverlay.w=g.w; txtOverlay.h=g.h; redraw(); }
+function overlayMove(dx,dy){ if(!txtOverlay) setOverlay(true);
+  txtOverlay.x+=dx; txtOverlay.y+=dy; $('txtX').value=txtOverlay.x; $('txtY').value=txtOverlay.y; redraw(); }
+// Aggiorna sia l'anteprima dei glifi sia l'overlay quando cambia testo/font/spaziatura.
+function onTextChanged(){ updateTextPreview(); overlayRefresh(); }
+
+$('txtIn').addEventListener('input', onTextChanged);
+$('txtGap').addEventListener('input', onTextChanged);
+$('txtX').addEventListener('input', ()=>{ if(txtOverlay){ txtOverlay.x=+$('txtX').value||0; redraw(); } });
+$('txtY').addEventListener('input', ()=>{ if(txtOverlay){ txtOverlay.y=+$('txtY').value||0; redraw(); } });
+$('txtPreview').addEventListener('change', e=>setOverlay(e.target.checked));
+$('txtUp').addEventListener('click', ()=>overlayMove(0,-1));
+$('txtDown').addEventListener('click', ()=>overlayMove(0,+1));
+$('txtLeft').addEventListener('click', ()=>overlayMove(-1,0));
+$('txtRight').addEventListener('click', ()=>overlayMove(+1,0));
+$('txtFontSel').addEventListener('change', e=>{ textFontIdx=+e.target.value; onTextChanged(); });
+$('txtFontLoad').addEventListener('click', ()=>$('txtFontPick').click());
+$('txtFontPick').addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=()=>{ try{
+      const p=parseFontHeader(rd.result);
+      p.fonts.forEach(pf=>textFonts.push(fontFromParsed(pf)));
+      textFontIdx=textFonts.length-1; renderTextFontSel(); onTextChanged();
+    }catch(err){ alert('Font non riconosciuto: '+err.message); } };
+  rd.readAsText(f); e.target.value=''; });
+
+$('txtStamp').addEventListener('click', ()=>{
+  const ic=curIcon(), gap=clamp(+$('txtGap').value||0,0,6), v=paintValue();
+  const {h,w,grid}=renderText(activeTextFont(), $('txtIn').value||'', gap);
+  const x=+$('txtX').value||0, y=+$('txtY').value||0;
+  for(let r=0;r<h;r++) for(let c=0;c<w;c++){ if(!grid[r][c]) continue;
+    const rr=y+r, cc=x+c; if(rr>=0&&cc>=0&&rr<ic.h&&cc<ic.w) ic.grid[rr][cc]=v; }
   redraw(); refreshIconThumb(); save();
 });
 $('txtFit').addEventListener('click', ()=>{
-  const txt=($('txtIn').value||'').toUpperCase(), gap=clamp(+$('txtGap').value||0,0,6);
-  resizeIconTo(Math.max(1,textWidth(txt,gap)), Math.max(5,curIcon().h));
-  $('txtX').value=0; $('txtY').value=0;
+  const gap=clamp(+$('txtGap').value||0,0,6);
+  const {h,w}=renderText(activeTextFont(), $('txtIn').value||'', gap);
+  resizeIconTo(Math.max(1,w), Math.max(h,curIcon().h));
+  $('txtX').value=0; $('txtY').value=0; if(txtOverlay){ txtOverlay.x=0; txtOverlay.y=0; }
+  onTextChanged();
 });
+renderTextFontSel(); updateTextPreview();
 
 // ============ GENERAZIONE .h (icone) ============
 function genIcon(ic){
@@ -911,11 +1068,44 @@ if(!supportsFS) $('saveFile').title='Su file:// il browser salva in Scaricati. P
 $('preamble').addEventListener('input', e=>{ activeDoc().preamble=e.target.value; save(); });
 
 // ============ PERSISTENZA ============
-function save(){ try{ localStorage.setItem(LS, JSON.stringify({kind, icons:doc, font:fdoc})); }catch(_){} }
+// Ogni save() serializza lo stato e, se è cambiato, registra il precedente nella
+// cronologia (undo). histLock evita di sporcare la cronologia durante undo/redo.
+function save(){ const json=JSON.stringify({kind, icons:doc, font:fdoc});
+  try{ localStorage.setItem(LS, json); }catch(_){}
+  if(histLock) return;
+  if(lastSnap===null){ lastSnap=json; return; }
+  if(json===lastSnap) return;
+  undoStack.push(lastSnap); if(undoStack.length>120) undoStack.shift();
+  redoStack.length=0; lastSnap=json; updateHistButtons();
+}
 function loadState(){ try{ const s=localStorage.getItem(LS); return s?JSON.parse(s):null; }catch(_){ return null; } }
+
+// ============ CRONOLOGIA (undo/redo) ============
+// Ripristina l'intero documento (icone o font) da uno snapshot e ricostruisce la UI.
+function applyState(json){
+  const s=JSON.parse(json); kind=s.kind||'icons'; doc=s.icons; fdoc=s.font;
+  histLock=true; setKind(kind); histLock=false;
+  lastSnap=json; try{ localStorage.setItem(LS, json); }catch(_){}
+  updateHistButtons();
+}
+function undo(){ if(!undoStack.length) return; redoStack.push(lastSnap); applyState(undoStack.pop()); }
+function redo(){ if(!redoStack.length) return; undoStack.push(lastSnap); applyState(redoStack.pop()); }
+function updateHistButtons(){ const u=$('undoBtn'), r=$('redoBtn');
+  if(u) u.disabled=!undoStack.length; if(r) r.disabled=!redoStack.length; }
+$('undoBtn').addEventListener('click', undo);
+$('redoBtn').addEventListener('click', redo);
+window.addEventListener('keydown', e=>{
+  if(!(e.ctrlKey||e.metaKey)) return;
+  if(/input|textarea|select/i.test(e.target.tagName)) return;   // lascia l'undo nativo nei campi
+  const k=e.key.toLowerCase();
+  if(k==='z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(k==='y' || (k==='z' && e.shiftKey)){ e.preventDefault(); redo(); }
+});
 
 // ============ AVVIO ============
 setKind(kind);
+lastSnap = JSON.stringify({kind, icons:doc, font:fdoc});   // base cronologia
+updateHistButtons();
 </script>
 </body>
 </html>
