@@ -1230,6 +1230,22 @@ void loop() {
     if (millis() - portale_t0 > PORTALE_TIMEOUT) ESP.restart();  // safety: ritenta
     dnsServer.processNextRequest();
     httpServer.handleClient();
+    // SX tenuto premuto a lungo esce dal portale (entrato per sbaglio con SU lungo):
+    // riavvia e ritenta la connessione normale. Prima l'unica uscita era il timeout
+    // di 5 min o staccare l'alimentazione. Lettura I2C throttlata: il bus e' a 25kHz.
+    static unsigned long sx_giu_t0 = 0, sx_ultimaLettura = 0;
+    if (millis() - sx_ultimaLettura >= 50) {
+      sx_ultimaLettura = millis();
+      if (!pcf.digitalRead(SX_btn_PCFpin)) {          // SX premuto (active-low)
+        if (sx_giu_t0 == 0) sx_giu_t0 = millis();
+        else if (millis() - sx_giu_t0 >= LONG_PRESS_T) {
+          Serial.println("SX lungo nel portale: esco e riavvio");
+          ESP.restart();
+        }
+      } else {
+        sx_giu_t0 = 0;                                 // rilasciato: azzera il timer
+      }
+    }
     mostraPortale();
     return;
   }
@@ -1716,7 +1732,7 @@ void controllaSveglia() {
 void mostraPortale() {
   static unsigned long t = 0;
   static int pcx = 31;
-  const char* msg = "WIFI SETUP: COLLEGATI ALLA RETE WIFICLOCKSETUP E APRI 192.168.4.1";
+  const char* msg = "WIFI SETUP: COLLEGATI ALLA RETE WIFICLOCKSETUP E APRI 192.168.4.1 - TIENI PREMUTO SX PER USCIRE";
   if (millis() - t < 75) return;
   t = millis();
   strip.ClearTo(RgbColor(0));
