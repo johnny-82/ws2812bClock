@@ -84,10 +84,24 @@ uint8_t lum_max = 20;        // luminosita' a piena luce (0-255)
 uint16_t amb_max = 800;      // soglia ambient per cui si raggiunge lum_max
 bool apds_init_ok = false;   // esito init APDS al boot
 bool apds_light_ok = false;  // esito enableLightSensor al boot
+// Al buio (ambient <= AMBIENT_SOLO_ORARIO) mostriamo solo l'orario: il flag blocca
+// l'avanzamento automatico dalla pagina orario (vedi loop()).
+bool buio = false;
+// Timestamp dell'ultima lettura del sensore. regolaLuminosita() viene chiamata al
+// cambio pagina, ma al buio la pagina non cambia: una lettura periodica (LUM_POLL)
+// garantisce comunque il rilevamento del ritorno della luce per "sbloccare" il ciclo.
+unsigned long lum_ultimaLettura = 0;
+// Configurabili da /lum e persistiti in EEPROM (vedi caricaLum/salvaLum).
+uint16_t amb_solo_ora = 1;   // ambient <= questo -> solo orario
+uint8_t lum_poll_min = 2;    // ogni quanti minuti rileggere il sensore (1-255)
 
-// EEPROM: sveglia a 0 (5 byte), luminosita' a 8 (6 byte), wifi a 16.
+// EEPROM: sveglia a 0 (5 byte), luminosita' a 8 (6 byte), wifi a 16, coord a 120.
+// Parametri "solo orario al buio" in un blocco separato (LUM2) dopo COORD, per non
+// toccare il layout dei blocchi esistenti (LUM e' saturo: 8..13, wifi parte a 16).
 #define LUM_MAGIC 0x4C
 #define LUM_EEPROM_ADDR 8
+#define LUM2_MAGIC 0x4D
+#define LUM2_EEPROM_ADDR 170        // dopo COORD (120..~160); EEPROM.begin(512)
 void caricaLum() {
   struct { uint8_t magic, lmin, lmax; uint16_t amax; } c;
   EEPROM.get(LUM_EEPROM_ADDR, c);
@@ -97,12 +111,23 @@ void caricaLum() {
   } else {
     Serial.println("Lum: nessuna config valida in EEPROM, uso default");
   }
+  struct { uint8_t magic; uint16_t solo_ora; uint8_t poll_min; } c2;
+  EEPROM.get(LUM2_EEPROM_ADDR, c2);
+  if (c2.magic == LUM2_MAGIC && c2.poll_min >= 1) {
+    amb_solo_ora = c2.solo_ora; lum_poll_min = c2.poll_min;
+    Serial.printf("Lum2 caricata: solo_ora<=%d poll=%dmin\n", amb_solo_ora, lum_poll_min);
+  } else {
+    Serial.println("Lum2: nessuna config valida in EEPROM, uso default");
+  }
 }
 void salvaLum() {
   struct { uint8_t magic, lmin, lmax; uint16_t amax; } c = { LUM_MAGIC, lum_min, lum_max, amb_max };
   EEPROM.put(LUM_EEPROM_ADDR, c);
+  struct { uint8_t magic; uint16_t solo_ora; uint8_t poll_min; } c2 = { LUM2_MAGIC, amb_solo_ora, lum_poll_min };
+  EEPROM.put(LUM2_EEPROM_ADDR, c2);
   EEPROM.commit();
-  Serial.printf("Lum salvata: min=%d max=%d amb_max=%d\n", lum_min, lum_max, amb_max);
+  Serial.printf("Lum salvata: min=%d max=%d amb_max=%d solo_ora<=%d poll=%dmin\n",
+                lum_min, lum_max, amb_max, amb_solo_ora, lum_poll_min);
 }
 
 // --- Sveglia ---
@@ -846,6 +871,8 @@ void setup() {
       if (nmin > nmax) { uint8_t t = nmin; nmin = nmax; nmax = t; }
       lum_min = nmin; lum_max = nmax;
       amb_max = constrain(httpServer.arg("amb").toInt(), 1, 37000);
+      amb_solo_ora = constrain(httpServer.arg("soloora").toInt(), 0, 37000);
+      lum_poll_min = constrain(httpServer.arg("poll").toInt(), 1, 255);
       salvaLum();
       regolaLuminosita();  // applica subito i nuovi parametri
     }
@@ -856,6 +883,8 @@ void setup() {
     h += "<label>Min (al buio, 0-255): <input type=number name=lmin min=0 max=255 value=" + String(lum_min) + "></label>";
     h += "<label>Max (a piena luce, 0-255): <input type=number name=lmax min=0 max=255 value=" + String(lum_max) + "></label>";
     h += "<label>Soglia ambient per il max: <input type=number name=amb min=1 max=37000 value=" + String(amb_max) + "></label>";
+    h += "<label>Solo orario se ambient &le; (buio): <input type=number name=soloora min=0 max=37000 value=" + String(amb_solo_ora) + "></label>";
+    h += "<label>Rilettura sensore ogni (minuti): <input type=number name=poll min=1 max=255 value=" + String(lum_poll_min) + "></label>";
     h += "<input type=hidden name=save value=1><button type=submit>Salva</button></form>";
     h += "<p class=s>Stato attuale (la pagina rilegge il sensore ad ogni apertura)</p>";
     // L'indicatore di salute e' la PROVA REALE (la lettura I2C e' riuscita?), non
@@ -1214,6 +1243,10 @@ void loop() {
   httpServer.handleClient();
   MDNS.update();
   controllaSveglia();
+  // Lettura periodica del sensore: al buio la pagina resta fissa sull'orario e
+  // regolaLuminosita() (che gira al cambio pagina) non verrebbe piu' chiamata.
+  // Questa rilettura ogni lum_poll_min minuti "sblocca" il ciclo al ritorno della luce.
+  if (millis() - lum_ultimaLettura >= (unsigned long)lum_poll_min * 60000UL) regolaLuminosita();
   if (pcfInputs) {
     //Serial.println("Interrupt");
     pcfInputs = false;
@@ -1373,7 +1406,8 @@ void loop() {
         strip.Show();
         blink = !blink;
       }
-      if (AUTO_NEXT_PAGE) {
+      // Al buio restiamo fissi sull'orario (niente data/meteo): !buio blocca l'avanzamento.
+      if (AUTO_NEXT_PAGE && !buio) {
         if (millis() - t_pagina >= 10000) nuova_pagina = PAGINA_DATA;
       }
     }
@@ -1648,13 +1682,16 @@ bool apdsForceLightOn() {
 #define AMBIENT_BUIO 0     // buio -> lum_min
 
 void regolaLuminosita() {
+  lum_ultimaLettura = millis();  // aggiorna sempre: se la lettura fallisce, riprova al prossimo LUM_POLL
   if (apds.readAmbientLight(ambient_light)) {
+    buio = (ambient_light <= amb_solo_ora);  // al buio: solo orario
     luminosita = constrain(map(ambient_light, AMBIENT_BUIO, amb_max, lum_min, lum_max), lum_min, lum_max);
     Serial.print("Luminosita auto=");
     Serial.print(luminosita);
     Serial.print(" (ambient=");
     Serial.print(ambient_light);
-    Serial.println(")");
+    Serial.print(buio ? ", BUIO)" : ")");
+    Serial.println();
   }
 }
 
