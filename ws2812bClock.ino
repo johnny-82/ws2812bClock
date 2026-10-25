@@ -822,13 +822,15 @@ void setup() {
   }, []() {
     HTTPUpload& upload = httpServer.upload();
     if (upload.status == UPLOAD_FILE_START) {
-      mostraUpdating();  // schermata fissa "UPDATING"/"UPDATE" prima del flash
+      mostraUpdating();  // scritta "UPDATING" (fissa o scorrevole) prima del flash
       uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
       Update.begin(maxSketchSpace, U_FLASH);
     } else if (upload.status == UPLOAD_FILE_WRITE && !Update.hasError()) {
       Update.write(upload.buf, upload.currentSize);
       // Barra di avanzamento azzurra sulla riga 7, ridisegnata solo quando
-      // cambia il numero di pixel pieni (per non rallentare il flash).
+      // cambia il numero di pixel pieni; Show() solo se cambia qualcosa
+      // (barra o scroll della scritta) per non rallentare il flash.
+      bool aggiorna = scorriUpdating();
       if (upload.contentLength > 0) {
         static int lastN = -1;
         int n = (int)((uint64_t)upload.totalSize * 32 / upload.contentLength);
@@ -836,9 +838,10 @@ void setup() {
           lastN = n;
           for (int c = 0; c < 32; c++)
             strip.SetPixelColor(ledPos(7, c), c < n ? applicaLum(HtmlColor(0x0080ff)) : RgbColor(0));
-          strip.Show();
+          aggiorna = true;
         }
       }
+      if (aggiorna) strip.Show();
     } else if (upload.status == UPLOAD_FILE_END && !Update.hasError()) {
       Update.end(true);
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -1535,58 +1538,71 @@ void loop() {
     disegnaSveglia(true);
   }
 }
+// I font di myFont.h hanno come prima riga { righe, colonne, nc }: righe e
+// colonne massime si leggono da li', cosi' un font puo' avere glifi larghi fino
+// a 'colonne' (basta cambiarle nell'editor) senza toccare il codice.
+const int* datiFont(byte font) {
+  return font == FONT_8x6 ? &grafica8x6[0][0] : &grafica5x3[0][0];
+}
+// Colonne occupate dal glifo, spaziatura di 1 px inclusa: fino all'ultima
+// colonna accesa + 1. Spazio e glifi vuoti valgono floor(colonne/3) + 1.
+int larghezzaGlifo(const int* f, int elemento) {
+  int nc = f[1], w = 0;
+  if (elemento != 11)
+    for (int c = 0; c < nc; c++)
+      if (f[elemento * nc + c] & 0xff) w = c + 2;
+  return w ? w : nc / 3 + 1;
+}
 int larghezza(String testo, byte font) {
-  byte b;
-  int totale = 0, lunghezza = 0, elemento, nc = 3;
-  if (font == FONT_8x6) nc = 6;
-  for (int i = 0; i < testo.length(); i++) {
-    elemento = numEl(testo.charAt(i));
-    for (int c = 0; c < nc; c++) {
-      if (font == FONT_5x3) b = grafica5x3[elemento][c];
-      if (font == FONT_8x6) b = grafica8x6[elemento][c];
-      if (b > 0) lunghezza = c + 2;
-      if (elemento == 11) lunghezza = floor(nc / 3) + 1;
-    }
-    totale += lunghezza;
-  }
+  const int* f = datiFont(font);
+  int totale = 0;
+  for (int i = 0; i < testo.length(); i++) totale += larghezzaGlifo(f, numEl(testo.charAt(i)));
   return totale;
 }
 void scrivi(String testo, byte font, int startRiga, int startColonna, unsigned int colore) {
-  byte b1 = 0, b2 = 0;
-  int nr = 5, nc = 3, elemento, lunghezza = 0;
-  if (font == FONT_8x6) {
-    nr = 8;
-    nc = 6;
-  }
+  const int* f = datiFont(font);
+  int nr = f[0], nc = f[1];
   for (int i = 0; i < testo.length(); i++) {
-    startColonna += lunghezza;
-    elemento = numEl(testo.charAt(i));
-    for (int c = 0; c < nc; c++) {
-      if (font == FONT_5x3) b1 = grafica5x3[elemento][c];
-      if (font == FONT_8x6) b1 = grafica8x6[elemento][c];
-      if (b1 > 0) lunghezza = c + 2;
+    int elemento = numEl(testo.charAt(i));
+    int w = larghezzaGlifo(f, elemento);
+    // disegna solo le colonne del glifo (non la spaziatura): non sporca i vicini
+    for (int c = 0; c < w - 1 && c < nc; c++) {
+      byte b1 = f[elemento * nc + c];
       for (int r = 0; r < nr; r++) {
         int lp = ledPos(startRiga + r, startColonna + c);
-        if (lp >= 0 && lp < NUM_LEDS) {
-          b2 = bitRead(b1, 7 - r);
-          strip.SetPixelColor(lp, b2 ? applicaLum(HtmlColor(colore)) : RgbColor(0));
-        }
+        if (lp >= 0 && lp < NUM_LEDS)
+          strip.SetPixelColor(lp, bitRead(b1, 7 - r) ? applicaLum(HtmlColor(colore)) : RgbColor(0));
       }
-      if (elemento == 11) lunghezza = floor(nc / 3) + 1;
     }
+    startColonna += w;
   }
 }
-// Schermata fissa (non scorrevole) mostrata all'inizio dell'OTA. Usa
-// "UPDATING" se ci sta nei 32 px, altrimenti ripiega su "UPDATE". Centrata.
+// Scritta "UPDATING" durante l'OTA: fissa e centrata se ci sta nei 32 px,
+// altrimenti scorre sulle righe 2-6. Si ridisegnano solo le righe 0-6, cosi' la
+// barra di avanzamento sulla riga 7 resta ferma.
+int upd_x = 0, upd_w = 0;
+unsigned long upd_t = 0;
+void disegnaUpdating() {
+  for (int r = 0; r < 7; r++)
+    for (int c = 0; c < 32; c++) strip.SetPixelColor(ledPos(r, c), RgbColor(0));
+  scrivi("UPDATING", FONT_5x3, 2, upd_x, 0xff8000);  // arancione
+}
 void mostraUpdating() {
-  String testo = "UPDATING";
-  if (larghezza(testo, FONT_5x3) > 32) testo = "UPDATE";
-  int w = larghezza(testo, FONT_5x3) - 1;   // -1: l'ultimo char include lo spazio finale
-  int startColonna = (32 - w) / 2;
-  if (startColonna < 0) startColonna = 0;
+  upd_w = larghezza("UPDATING", FONT_5x3) - 1;   // -1: l'ultimo char include lo spazio finale
+  upd_x = upd_w <= 32 ? (32 - upd_w) / 2 : 0;     // se scorre parte da sinistra, gia' leggibile
+  upd_t = millis();
   strip.ClearTo(RgbColor(0));
-  scrivi(testo, FONT_5x3, 2, startColonna, 0xff8000);  // arancione
+  disegnaUpdating();
   strip.Show();
+}
+// Da chiamare durante l'upload: fa avanzare lo scroll di una colonna ogni 70 ms
+// (solo se la scritta non ci sta). Ritorna true se ha ridisegnato.
+bool scorriUpdating() {
+  if (upd_w <= 32 || millis() - upd_t < 70) return false;
+  upd_t = millis();
+  if (--upd_x < -upd_w) upd_x = 31;
+  disegnaUpdating();
+  return true;
 }
 void disegna(RgbColor img[8][8], int startRiga, int startColonna) {
   for(int c=0;c<8;c++){
