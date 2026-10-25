@@ -343,6 +343,29 @@ void aggiornaRTCdaNTP(bool attendi) {
                 tloc->tm_hour, tloc->tm_min, tloc->tm_sec);
 }
 
+// Sync provider di TimeLib: se l'ora di sistema (SNTP) e' valida usa quella,
+// convertita in ora locale con le regole TZ_ITALIA -> il passaggio solare/legale
+// avviene da solo, senza riavvio. Una volta all'ora riallinea anche l'RTC, che
+// resta la sorgente di riserva se l'NTP non ha mai sincronizzato.
+time_t sincronizzaOra() {
+  static unsigned long rtc_ultimoAgg = 0;
+  time_t ora = time(nullptr);
+  if (ora < 1000000000) return aggiornaDateTime();
+  if (millis() - rtc_ultimoAgg >= 3600000UL) {
+    aggiornaRTCdaNTP(false);
+    rtc_ultimoAgg = millis();
+  }
+  struct tm* tloc = localtime(&ora);
+  tmElements_t dt;
+  dt.Year = tloc->tm_year + 1900 - 1970;
+  dt.Month = tloc->tm_mon + 1;
+  dt.Day = tloc->tm_mday;
+  dt.Hour = tloc->tm_hour;
+  dt.Minute = tloc->tm_min;
+  dt.Second = tloc->tm_sec;
+  return makeTime(dt);
+}
+
 // Mappa il codice meteo WMO di Open-Meteo sull'icona 8x8 da mostrare.
 // Tabella WMO: 0 sereno, 1-2 poco nuvoloso, 3 coperto, 45/48 nebbia,
 // 51-67 pioviggine/pioggia, 71-77 neve, 80-82 rovesci, 85-86 rovesci di neve,
@@ -770,8 +793,8 @@ void setup() {
     }
   }
   if (r <= 128) Serial.println(" trovato");
-  setSyncProvider(aggiornaDateTime);
-  setSyncInterval(3600);
+  setSyncProvider(sincronizzaOra);
+  setSyncInterval(60);  // ogni minuto: il cambio d'ora arriva entro 60s
 
   // LED gia' inizializzati in cima al setup (strip.Begin()); qui regoliamo
   // solo la luminosita' col sensore prima di disegnare lo splash.
